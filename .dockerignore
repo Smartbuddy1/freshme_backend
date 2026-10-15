@@ -1,0 +1,13 @@
+.git
+.local
+**/node_modules
+**/.env
+**/.env.*
+**/dist
+**/coverage
+**/*.log
+agent
+test
+deploy/.env
+*.pem
+*.key

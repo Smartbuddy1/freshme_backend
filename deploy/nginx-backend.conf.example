@@ -1,0 +1,23 @@
+# Add this as a NEW site in your existing host Nginx installation.
+# Replace api.yourdomain.com, and change 3103 if that port is already in use.
+# Obtain HTTPS for this hostname using your existing certificate manager.
+server {
+    listen 80;
+    server_name api.yourdomain.com;
+
+    # Allow the application's 5 MB image plus multipart overhead.
+    client_max_body_size 6m;
+
+    location / {
+        # No trailing URI: preserve /api/... and /healthz exactly.
+        proxy_pass http://127.0.0.1:3103;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        # This guide assumes Nginx is the only public proxy.
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 60s;
+    }
+}

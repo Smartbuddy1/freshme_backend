@@ -1,0 +1,43 @@
+{
+  "name": "@fresh-me/server",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "seed": "node src/seed.js",
+    "test": "vitest run",
+    "simulate-payment": "node scripts/simulate-payment.js",
+    "db:check": "node scripts/database.js",
+    "db:migrate": "node scripts/database.js --migrate",
+    "production:check": "node scripts/preflight.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1151.0",
+    "bcryptjs": "^3.0.2",
+    "compression": "^1.8.2",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
+    "pg": "^8.23.1",
+    "pg-query-stream": "^4.17.1",
+    "pino": "^9.9.0",
+    "razorpay": "^2.9.6",
+    "sharp": "^0.35.5",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "embedded-postgres": "^18.4.0-beta.17",
+    "supertest": "^7.1.4",
+    "vitest": "^4.1.11"
+  },
+  "engines": {
+    "node": ">=24 <25"
+  }
+}

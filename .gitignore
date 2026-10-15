@@ -1,0 +1,17 @@
+node_modules/
+.env
+.env.*
+!.env.example
+!.env.pm2.example
+!.env.production.example
+.local/
+dist/
+coverage/
+*.log
+*.log.old
+*.pem
+*.key
+*.p12
+*.pfx
+*.zip
+*.tar.gz
