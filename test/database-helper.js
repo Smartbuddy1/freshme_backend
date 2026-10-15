@@ -28,5 +28,7 @@ export async function testDatabase() {
   return { async stop() { await disconnectDatabase(); await instance.stop(); } };
 }
 export async function resetDatabase() {
-  await database().query('TRUNCATE fresh_me.print_jobs, fresh_me.orders, fresh_me.products, fresh_me.counters, fresh_me.admins, fresh_me.refunds');
+  await database().query('TRUNCATE fresh_me.agent_pairings, fresh_me.agent_events, fresh_me.agent_commands, fresh_me.print_jobs, fresh_me.orders, fresh_me.products, fresh_me.counters, fresh_me.admins, fresh_me.refunds, fresh_me.machines');
+  await database().query("INSERT INTO fresh_me.machines (_id,code,name) VALUES ('default','DEFAULT','Fresh Me')");
+  await database().query("DELETE FROM fresh_me.settings WHERE _id<>'shop'");
 }

@@ -23,7 +23,8 @@ export function createDemoGateway(config, logger) {
         const order = remoteOrders.get(id);
         if (!order) throw new Error(`Demo order not found: ${id}`);
         return order;
-      }
+      },
+      fetchPayments: async () => ({ items: [] })
     },
     payments: {
       fetch: async id => {

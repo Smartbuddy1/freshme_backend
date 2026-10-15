@@ -3,9 +3,10 @@ import { database, transaction } from './database.js';
 import { z } from 'zod';
 import { Product, Order, Settings, PrintJob, Refund } from './models.js';
 import { HttpError, istDate, objectId } from './utils.js';
-export const orderInput = z.object({ idempotencyKey: z.string().uuid(), items: z.array(z.object({ productId: objectId, size: z.string().trim().min(1).max(30), qty: z.number().int().min(1).max(20) }).strict()).min(1).max(30), phone: z.string().optional().default(''), customerName: z.string().trim().max(80).optional().default('') }).strict();
-export async function calculateOrder(input) {
-  const products = await Product.find({ _id: { $in: input.items.map(i => i.productId) }, deleted: false });
+import { resolveMachine, machineCode, machineSettings } from './machines.js';
+export const orderInput = z.object({ machineCode: machineCode.default('DEFAULT'), idempotencyKey: z.string().uuid(), items: z.array(z.object({ productId: objectId, size: z.string().trim().min(1).max(30), qty: z.number().int().min(1).max(20) }).strict()).min(1).max(30), phone: z.string().optional().default(''), customerName: z.string().trim().max(80).optional().default('') }).strict();
+export async function calculateOrder(input, machineId = 'default') {
+  const products = await Product.find({ _id: { $in: input.items.map(i => i.productId) }, machineId, deleted: false });
   const items = input.items.map(i => {
     const p = products.find(p => String(p._id) === i.productId);
     const size = p?.sizes.find(s => s.label === i.size);
@@ -17,17 +18,29 @@ export async function calculateOrder(input) {
   return { items, total };
 }
 export async function createOrder(input, gateway, config) {
+  const machine = await resolveMachine(input.machineCode || 'DEFAULT');
   const requestHash = crypto.createHash('sha256').update(JSON.stringify({ items: input.items, phone: input.phone, customerName: input.customerName })).digest('hex');
   let order = await Order.findOne({ idempotencyKey: input.idempotencyKey });
+  if (order && order.machineId !== machine._id) throw new HttpError(409, 'This checkout key belongs to a different machine');
   if (!order) {
-    const settings = await Settings.findById('shop');
+    const settings = await machineSettings(machine._id);
     if (!settings?.acceptingOrders) throw new HttpError(409, 'Machine is resting, back soon');
-    const calculated = await calculateOrder(input);
-    try { order = await Order.create({ ...input, ...calculated, requestHash }); }
+    const calculated = await calculateOrder(input, machine._id);
+    try { order = await Order.create({ ...input, ...calculated, machineId: machine._id, requestHash }); }
     catch (e) { if (e.code !== '23505') throw e; order = await Order.findOne({ idempotencyKey: input.idempotencyKey }); }
   }
-  if (order.requestHash !== requestHash) throw new HttpError(409, 'This checkout key belongs to a different cart');
+  if (order.machineId !== machine._id || order.requestHash !== requestHash) throw new HttpError(409, 'This checkout key belongs to a different cart');
   if (order.status === 'EXPIRED' || (order.status === 'PENDING_PAYMENT' && Date.now() - order.createdAt > 30 * 60000)) throw new HttpError(410, 'Checkout expired. Please try again.');
+  if (order.status === 'PENDING_PAYMENT' && order.razorpayOrderId && !gateway?.isDemo && gateway?.orders?.fetch) {
+    try {
+      const remote = await gateway.orders.fetch(order.razorpayOrderId);
+      if (remote.status === 'paid') {
+        const payments = await gateway.orders.fetchPayments(order.razorpayOrderId);
+        const captured = payments?.items?.find(p => p.status === 'captured');
+        if (captured) order = await finalizePayment(captured);
+      }
+    } catch { /* Continue normal flow if gateway query fails */ }
+  }
   if (!order.razorpayOrderId) {
     // Persist ownership before the external call. Never blindly repeat an ambiguous create.
     const owned = await Order.findOneAndUpdate({ _id: order._id, razorpayCreateStartedAt: { $exists: false } }, { $set: { razorpayCreateStartedAt: new Date() } }, { new: true });
@@ -68,12 +81,12 @@ export async function finalizePayment(payment) {
     }
     const now = new Date(); const tokenDate = istDate(now);
     const nextCounter = async id => (await client.query('INSERT INTO fresh_me.counters (_id, seq) VALUES ($1,1) ON CONFLICT (_id) DO UPDATE SET seq=fresh_me.counters.seq+1 RETURNING seq', [id])).rows[0].seq;
-    const tokenNo = await nextCounter(tokenDate);
+    const tokenNo = await nextCounter(order.machineId === 'default' ? tokenDate : `${order.machineId}:${tokenDate}`);
     const orderCode = 'ORD-' + (100 + await nextCounter('order_seq'));
     const { rows: [paid] } = await client.query(
       'UPDATE fresh_me.orders SET status=\'PAID\', "paidAt"=$2, "tokenDate"=$3, "tokenNo"=$4, "orderCode"=$5, "razorpayPaymentId"=$6, "paymentMethod"=$7, refunded=EXISTS(SELECT 1 FROM fresh_me.refunds WHERE "paymentId"=$6), "updatedAt"=now() WHERE _id=$1 RETURNING *',
       [order._id, now, tokenDate, tokenNo, orderCode, payment.id, payment.method || 'unknown']);
-    await PrintJob.create({ type: 'ORDER', orderId: paid._id, payload: receiptPayload(paid) }, client);
+    await PrintJob.create({ machineId: paid.machineId, type: 'ORDER', orderId: paid._id, payload: receiptPayload(paid) }, client);
     return paid;
   });
   // Close the refund-before-payment race in both possible commit orders.

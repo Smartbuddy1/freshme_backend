@@ -180,7 +180,7 @@ describe('print queue and security', () => {
     await PrintJob.create({ type: 'TEST' }); let first;
     for (let n = 0; n < 5; n++) {
       const [job] = await claimJobs(); first ||= job;
-      const report = () => request(app).post(`/api/agent/jobs/${job._id}/failed`).set('x-agent-key', config.AGENT_KEY).send({ claimId: job.claimId, error: 'Printer offline' });
+      const report = () => request(app).post(`/api/agent/jobs/${job._id}/failed`).set('x-agent-key', config.AGENT_KEY).send({ claimId: job.claimId, reason: 'PRINT_ERROR', error: 'Receipt encoding failed' });
       expect((await report()).status).toBe(200); expect((await report()).status).toBe(200);
     }
     const failed = await PrintJob.findById(first._id); expect(failed.status).toBe('FAILED'); expect(failed.attempts).toBe(5);
@@ -192,7 +192,7 @@ describe('print queue and security', () => {
     expect((await browser.post('/api/admin/login').set('Origin','https://evil.example').send({ email: 'test@example.com', password: 'a-long-password' })).status).toBe(403);
     expect((await browser.post('/api/admin/login').send({ email: 'test@example.com', password: 'a-long-password' })).status).toBe(200);
     expect((await browser.get('/api/admin/dashboard')).status).toBe(200);
-    expect((await browser.post('/api/admin/change-password').send({ currentPassword: 'a-long-password', newPassword: 'another-long-password' })).status).toBe(200);
+    expect((await browser.post('/api/admin/change-password').send({ currentPassword: 'a-long-password', newPassword: 'Another-Strong-Password-92!' })).status).toBe(200);
     expect((await browser.get('/api/admin/me')).status).toBe(401);
   });
 });
