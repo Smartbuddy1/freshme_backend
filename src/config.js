@@ -22,14 +22,35 @@ const schema = z.object({
   LOG_LEVEL: z.enum(['fatal','error','warn','info','debug','trace','silent']).default('info'),
   DEMO_PAYMENT: z.preprocess(v => v === true || v === 'true' || v === '1', z.boolean()).default(false)
 });
-export function readConfig(env = process.env) {
-  const result = schema.safeParse(env);
+function parseEnvironment(configSchema, env) {
+  const result = configSchema.safeParse(env);
   if (!result.success) throw new Error(`Invalid environment: ${result.error.issues.map(i => i.path.join('.')).join(', ')}`);
-  const c = result.data;
+  return result.data;
+}
+const databaseSchema = schema.pick({ NODE_ENV: true, DATABASE_URL: true, DATABASE_SSL: true, DATABASE_CA_CERT: true, DATABASE_POOL_MAX: true, DATABASE_MIGRATE_ON_START: true });
+function validateDatabaseConfig(c) {
+  if (c.NODE_ENV === 'production' && c.DATABASE_SSL !== 'verify-full') throw new Error('Production database requires verified TLS');
+  return c;
+}
+function validateAdminConfig(c) {
   if (c.NODE_ENV === 'production') {
-    if (c.DATABASE_SSL !== 'verify-full') throw new Error('Production database requires verified TLS');
-    if (c.DEMO_PAYMENT) throw new Error('DEMO_PAYMENT must not be enabled in production');
     if (!/[a-z]/.test(c.ADMIN_PASSWORD) || !/[A-Z]/.test(c.ADMIN_PASSWORD) || !/\d/.test(c.ADMIN_PASSWORD) || !/[^a-zA-Z\d]/.test(c.ADMIN_PASSWORD) || new Set(c.ADMIN_PASSWORD).size < 8) throw new Error('Production ADMIN_PASSWORD must be strong: 12+ characters, upper/lowercase, number and symbol');
+    if (/replace|example|changeme|password|default/i.test(c.ADMIN_PASSWORD)) throw new Error('Replace placeholder ADMIN_PASSWORD before production');
+  }
+  return c;
+}
+export function readDatabaseConfig(env = process.env) {
+  return validateDatabaseConfig(parseEnvironment(databaseSchema, env));
+}
+export function readSeedConfig(env = process.env) {
+  const c = validateAdminConfig(validateDatabaseConfig(parseEnvironment(databaseSchema.extend({ ADMIN_EMAIL: schema.shape.ADMIN_EMAIL, ADMIN_PASSWORD: schema.shape.ADMIN_PASSWORD }), env)));
+  if (c.NODE_ENV === 'production' && /example\.|your-domain|\.(local|test|invalid)$/i.test(c.ADMIN_EMAIL)) throw new Error('Set the real owner ADMIN_EMAIL before seeding production');
+  return c;
+}
+export function readConfig(env = process.env) {
+  const c = validateAdminConfig(validateDatabaseConfig(parseEnvironment(schema, env)));
+  if (c.NODE_ENV === 'production') {
+    if (c.DEMO_PAYMENT) throw new Error('DEMO_PAYMENT must not be enabled in production');
     if (!c.CLIENT_ORIGIN.startsWith('https://')) throw new Error('Production CLIENT_ORIGIN must use HTTPS');
     for (const key of ['JWT_SECRET','AGENT_KEY','ADMIN_PASSWORD','RAZORPAY_KEY_ID','RAZORPAY_KEY_SECRET','RAZORPAY_WEBHOOK_SECRET','S3_BUCKET','AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY','AWS_SESSION_TOKEN']) {
       if (/replace|example|changeme|password|default/i.test(c[key])) throw new Error(`Replace placeholder ${key} before production`);

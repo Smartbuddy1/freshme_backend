@@ -116,7 +116,7 @@ separate `.env.production` file is used by the Docker deployment guide.
 
 ```bash
 cd "$FRESH_ME_DIR"
-test -f .env || cp .env.pm2.example .env
+PATH="$(dirname "$FRESH_ME_NODE24"):$PATH" npm run setup:env
 chmod 600 .env
 nano .env
 ```
@@ -184,6 +184,7 @@ Run each command separately; continue only if it succeeds:
 "$FRESH_ME_NODE24" scripts/database.js
 "$FRESH_ME_NODE24" scripts/database.js --migrate
 "$FRESH_ME_NODE24" src/seed.js
+"$FRESH_ME_NODE24" scripts/database.js --require-ready
 ```
 
 The test-payments flag allows real Razorpay Test Mode credentials. Production

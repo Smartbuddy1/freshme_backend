@@ -21,13 +21,13 @@ on EC2 from `.env.pm2.example` (preserve an existing EC2 `.env` during updates).
 ```bash
 cd /home/ec2-user/fresheme_backned
 npm ci --omit=dev
-test -f .env || cp .env.pm2.example .env
-chmod 600 .env
+npm run setup:env
 nano .env
 npm run production:check -- --allow-test-payments
 npm run db:check
 npm run db:migrate
 npm run seed
+npm run db:check -- --require-ready
 export FRESH_ME_NODE24="$(command -v node)"
 pm2 start deploy/ecosystem.config.cjs --only fresh-me-api
 curl --fail http://127.0.0.1:3103/healthz
@@ -35,6 +35,24 @@ curl --fail http://127.0.0.1:3103/healthz
 
 Run each step only after the previous step succeeds. Fill the production env
 before validation; omit `--allow-test-payments` when checking live credentials.
+
+`setup:env` creates a private `.env` with generated JWT, agent, webhook and
+admin secrets. It never overwrites an existing file. You still need your actual
+database URL, Razorpay keys, S3 settings, owner email and frontend HTTPS origin.
+Generated secrets are not printed and are never included in Git.
+
+Database setup is independent of payment/image-storage configuration:
+`npm run db:check` reports connection, TLS, migration and initial-data status.
+`npm run seed` needs only the database settings and owner login. To initialize
+only the default menu before choosing the owner account, run
+`npm run seed -- --menu-only`. Repeating seeds preserves existing data.
+`npm run db:check -- --require-ready` fails when migrations, owner account,
+products or shop settings are missing; it never writes to the database.
+The API still requires the complete production configuration before startup.
+
+On a shared EC2, confirm port 3103 is unused with `sudo ss -ltnp` before
+starting. Keep a separate Fresh Me process and do not run PM2 commands targeting
+all applications or replace existing Node/Nginx configuration.
 
 For this project's Amazon Linux EC2 and its existing applications, follow
 [the full EC2 guide](deploy/EC2_AMAZON_LINUX.md), including the separate Node 24

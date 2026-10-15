@@ -54,7 +54,7 @@ runtime installed. Re-export FRESH_ME_NODE24 as above in any new SSH session.
 ```bash
 cd /home/ec2-user/fresheme_backned
 PATH="$(dirname "$FRESH_ME_NODE24"):$PATH" npm ci --omit=dev
-test -f .env || cp .env.pm2.example .env
+PATH="$(dirname "$FRESH_ME_NODE24"):$PATH" npm run setup:env
 chmod 600 .env
 nano .env
 ```
@@ -84,6 +84,7 @@ Run separately, stopping at any error:
 "$FRESH_ME_NODE24" scripts/database.js
 "$FRESH_ME_NODE24" scripts/database.js --migrate
 "$FRESH_ME_NODE24" src/seed.js
+"$FRESH_ME_NODE24" scripts/database.js --require-ready
 ```
 
 Preflight checks configuration, not live AWS/Razorpay permissions. Migrations

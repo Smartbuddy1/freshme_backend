@@ -108,6 +108,13 @@ describe('PostgreSQL deployment', () => {
     expect((await Admin.findById(before._id)).passwordHash).toBe(before.passwordHash);
     expect(await Product.countDocuments()).toBe(6);
   });
+  it('menu-only seed preserves existing products and does not create an admin', async () => {
+    await seed({}, { menuOnly: true });
+    await seed({}, { menuOnly: true });
+    expect(await Product.countDocuments({})).toBe(6);
+    expect(await Admin.countDocuments({})).toBe(0);
+    expect((await Product.findById(product._id)).sizes[0].price).toBe(40);
+  });
   it('health checks query PostgreSQL and reports are served by SQL', async () => {
     const { payment } = await pending(); await finalizePayment(payment);
     expect((await request(app).get('/healthz')).body).toEqual({ ok: true });
