@@ -7,8 +7,7 @@ import compression from 'compression';
 import { z, ZodError } from 'zod';
 import { databaseHealthy } from './database.js';
 import { fileURLToPath } from 'node:url';
-import { Product, Settings, Order, PrintJob, Machine } from './models.js';
-import { resolveMachine, machineSettings, publicMachine } from './machines.js';
+import { Product, Settings, Order, PrintJob } from './models.js';
 import { orderInput, createOrder, finalizePayment, recordRefund } from './payments.js';
 import { asyncRoute, HttpError, validSignature, objectId, publicSettings, isAllowedOrigin } from './utils.js';
 import { agentRouter } from './agent-api.js';
@@ -63,18 +62,18 @@ export function createApp({ config, gateway, logger, imageStorage = createImageS
   // Separate shared-NAT budgets: payment confirmation cannot be starved by cart requests.
   const limit = maximum => rateLimit({ windowMs: 60000, limit: maximum, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Too many requests. Please wait one minute.' } });
   const publicPost = limit(120), paymentPost = limit(300);
-  const menuCache = new Map();
-  app.get('/api/menu', asyncRoute(async (req, res) => {
-    const code = (req.query.machineCode || 'DEFAULT').toUpperCase();
-    const cached = menuCache.get(code);
-    if (cached && Date.now() - cached.time < 10000) {
-      return res.json(cached.data);
+  let menuCache;
+  const invalidateMenu=()=>{menuCache=undefined;};
+  app.get('/api/menu',asyncRoute(async(req,res)=>{
+    z.object({}).strict().parse(req.query);
+    let cached=menuCache;
+    if(!cached || Date.now()-cached.time>=10000){
+      cached={time:Date.now()};
+      cached.products=Promise.resolve(Product.find({deleted:false}).sort({available:-1,sortOrder:1}).lean()).catch(error=>{if(menuCache===cached)invalidateMenu();throw error;});
+      menuCache=cached;
     }
-    const machine = await resolveMachine(code);
-    const [products, settings] = await Promise.all([Product.find({ machineId: machine._id, deleted: false }).sort({ available: -1, sortOrder: 1 }).lean(), machineSettings(machine._id)]);
-    const data = { machine: publicMachine(machine), products: products.map(p => ({ ...p, slotCode: `S${String(p.sortOrder + 1).padStart(2, '0')}` })), settings: { ...publicSettings(settings), isDemo: Boolean(gateway.isDemo) } };
-    menuCache.set(code, { time: Date.now(), data });
-    res.json(data);
+    const [products,settings]=await Promise.all([cached.products,Settings.findById('shop')]);
+    res.json({products,settings:{...publicSettings(settings),isDemo:Boolean(gateway.isDemo)}});
   }));
   app.post('/api/orders', publicPost, asyncRoute(async (req, res) => res.status(201).json(await createOrder(orderInput.parse(req.body), gateway, config))));
   if (config.NODE_ENV !== 'production' && gateway.isDemo) {
@@ -103,7 +102,7 @@ export function createApp({ config, gateway, logger, imageStorage = createImageS
   app.get('/api/orders/:id', limit(300), asyncRoute(async (req, res) => {
     const isObjectId = /^[a-f\d]{24}$/i.test(req.params.id);
     const query = isObjectId ? { _id: req.params.id } : { orderCode: req.params.id.toUpperCase() };
-    let order = await Order.findOne(query).select('machineId orderCode tokenNo tokenDate status items total createdAt razorpayOrderId').lean();
+    let order = await Order.findOne(query).select('orderCode tokenNo tokenDate status items total createdAt razorpayOrderId').lean();
     if (!order) throw new HttpError(404, 'Order not found');
     if (order.status === 'PENDING_PAYMENT' && order.razorpayOrderId && !gateway.isDemo && gateway?.orders?.fetch && gateway.orders.fetchPayments && Date.now()-(reconciliationChecks.get(order._id)||0)>=10000) {
       reconciliationChecks.delete(order._id);
@@ -122,16 +121,18 @@ export function createApp({ config, gateway, logger, imageStorage = createImageS
       } catch { /* Continue normal flow if gateway query fails */ }
     }
     const latest = await PrintJob.findOne({ orderId: order._id }).sort({ createdAt: -1, _id: -1 });
-    const machine = await Machine.findById(order.machineId);
     // Reconciliation returns a complete database row. Never spread that row into
     // a public response: it contains phone, customer name and checkout secrets.
     const {_id,orderCode,tokenNo,tokenDate,status,items,total,createdAt}=order;
-    res.json({ _id,orderId:_id,orderCode,tokenNo,tokenDate,status,items,total,createdAt,machine:publicMachine(machine),printed:latest?.status==='PRINTED' });
+    res.json({ _id,orderId:_id,orderCode,tokenNo,tokenDate,status,items,total,createdAt,shopName:(await Settings.findById('shop')).shopName,printed:latest?.status==='PRINTED' });
   }));
-  app.use('/api/agent', agentRouter(config)); app.use('/api/admin', adminRouter(config, imageStorage));
+  app.use('/api/agent', agentRouter(config)); app.use('/api/admin', adminRouter(config, imageStorage, invalidateMenu));
   app.use('/api', (req, res, next) => next(new HttpError(404, 'Endpoint not found')));
   const dist = fileURLToPath(new URL('../../frontend/dist/', import.meta.url));
-  app.use(compression(), express.static(dist, { setHeaders(res, path) { if (path.includes('assets')) res.set('Cache-Control', 'public,max-age=31536000,immutable'); else res.set('Cache-Control', 'no-cache, no-store, must-revalidate'); } }));
+  const staticOptions={ setHeaders(res, path) { if (path.includes('assets')) res.set('Cache-Control', 'public,max-age=31536000,immutable'); else res.set('Cache-Control', 'no-cache, no-store, must-revalidate'); } };
+  app.use(compression());
+  app.use('/freshme',express.static(dist,staticOptions));
+  app.use(express.static(dist,staticOptions));
   app.get('*', (req, res, next) => {
     res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.sendFile(`${dist}/index.html`, e => e && next(new HttpError(404, 'Client build missing. Run npm run build.')));

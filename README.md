@@ -4,6 +4,10 @@ Copy this folder to EC2 as `fresheme_backned`. It contains the complete API,
 SQL migrations, database certificate, dependency lockfile, env templates and
 PM2/Nginx deployment files. No frontend, agent or parent package.json is needed.
 
+For existing installations, read [the single-shop upgrade guide](deploy/SINGLE_SHOP_UPGRADE.md)
+before applying migration 002 or updating the frontend/agents. Local fixes are not
+automatically published to GitHub.
+
 To download this backend onto EC2:
 
 ```bash

@@ -38,6 +38,7 @@ const schema = z.object({
   ADMIN_EMAIL: z.string().email(), ADMIN_PASSWORD: z.string().min(12),
   CLIENT_ORIGIN: z.string().url(), TRUST_PROXY: z.coerce.number().int().min(0).max(5).default(0),
   LOG_LEVEL: z.enum(['fatal','error','warn','info','debug','trace','silent']).default('info'),
+  AGENT_FILE_MODE_ALLOWED: z.enum(['true','false']).default('false').transform(v=>v==='true'),
   DEMO_PAYMENT: z.preprocess(v => v === true || v === 'true' || v === '1', z.boolean()).default(false)
 });
 function parseEnvironment(configSchema, env) {
@@ -69,6 +70,7 @@ export function readConfig(env = process.env) {
   const c = validateAdminConfig(validateDatabaseConfig(parseEnvironment(schema, env)));
   if (c.NODE_ENV === 'production') {
     if (c.DEMO_PAYMENT) throw new Error('DEMO_PAYMENT must not be enabled in production');
+    if (c.AGENT_FILE_MODE_ALLOWED) throw new Error('File printing is only allowed on an isolated non-production backend');
     if (!c.CLIENT_ORIGIN.startsWith('https://')) throw new Error('Production CLIENT_ORIGIN must use HTTPS');
     for (const key of ['JWT_SECRET','AGENT_KEY','ADMIN_PASSWORD','RAZORPAY_KEY_ID','RAZORPAY_KEY_SECRET','RAZORPAY_WEBHOOK_SECRET','S3_BUCKET','AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY','AWS_SESSION_TOKEN']) {
       if (/replace|example|changeme|password|default/i.test(c[key])) throw new Error(`Replace placeholder ${key} before production`);
