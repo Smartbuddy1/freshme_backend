@@ -7,19 +7,23 @@ const schema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   DATABASE_URL: z.preprocess(v => {
     if (typeof v !== 'string') return v;
-    const match = v.match(/^(postgres(?:ql)?:\/\/)([^/]+)(.*)$/);
-    if (!match) return v;
+    let s = v.trim();
+    if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+      s = s.slice(1, -1).trim();
+    }
+    const match = s.match(/^(postgres(?:ql)?:\/\/)([^/]+)(.*)$/);
+    if (!match) return s;
     const lastAt = match[2].lastIndexOf('@');
-    if (lastAt === -1) return v;
+    if (lastAt === -1) return s;
     const auth = match[2].slice(0, lastAt);
     const hostPart = match[2].slice(lastAt + 1);
     const colon = auth.indexOf(':');
-    if (colon === -1) return v;
+    if (colon === -1) return s;
     const user = auth.slice(0, colon);
     const pass = auth.slice(colon + 1);
     const encodedPass = encodeURIComponent(decodeURIComponent(pass));
     return `${match[1]}${user}:${encodedPass}@${hostPart}${match[3]}`;
-  }, z.string().url().refine(v => /^postgres(ql)?:\/\//.test(v), 'PostgreSQL URL required')),
+  }, z.string().refine(v => /^postgres(ql)?:\/\//.test(v), 'PostgreSQL URL required (must start with postgresql:// or postgres://)')),
   DATABASE_SSL: z.enum(['verify-full', 'disable']).default('verify-full'),
   DATABASE_CA_CERT: z.string().optional(),
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(50).default(10),
@@ -38,7 +42,7 @@ const schema = z.object({
 });
 function parseEnvironment(configSchema, env) {
   const result = configSchema.safeParse(env);
-  if (!result.success) throw new Error(`Invalid environment: ${result.error.issues.map(i => i.path.join('.')).join(', ')}`);
+  if (!result.success) throw new Error(`Invalid environment: ${result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
   return result.data;
 }
 const databaseSchema = schema.pick({ NODE_ENV: true, DATABASE_URL: true, DATABASE_SSL: true, DATABASE_CA_CERT: true, DATABASE_POOL_MAX: true, DATABASE_MIGRATE_ON_START: true });
