@@ -59,7 +59,7 @@ export function readConfig(env = process.env) {
   if (Boolean(c.AWS_ACCESS_KEY_ID) !== Boolean(c.AWS_SECRET_ACCESS_KEY)) throw new Error('Set both AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, or leave both empty to use an IAM role');
   if (c.AWS_SESSION_TOKEN && !c.AWS_ACCESS_KEY_ID) throw new Error('AWS_SESSION_TOKEN requires AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY');
   const origin = new URL(c.CLIENT_ORIGIN);
-  if (origin.pathname !== '/' || origin.search || origin.hash || origin.username || origin.password) throw new Error('CLIENT_ORIGIN must be an origin without a path or credentials');
+  if (origin.search || origin.hash || origin.username || origin.password) throw new Error('CLIENT_ORIGIN must not include query, hash or credentials');
   if (c.JWT_SECRET === c.AGENT_KEY) throw new Error('JWT_SECRET and AGENT_KEY must be independent');
   c.CLIENT_ORIGIN = origin.origin;
   return c;
