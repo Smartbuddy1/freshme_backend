@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { Product, Order, Settings, PrintJob, Refund } from './models.js';
 import { HttpError, istDate, objectId } from './utils.js';
 import { resolveMachine, machineCode, machineSettings } from './machines.js';
-export const orderInput = z.object({ machineCode: machineCode.default('DEFAULT'), idempotencyKey: z.string().uuid(), items: z.array(z.object({ productId: objectId, size: z.string().trim().min(1).max(30), qty: z.number().int().min(1).max(20) }).strict()).min(1).max(30), phone: z.string().optional().default(''), customerName: z.string().trim().max(80).optional().default('') }).strict();
+export const orderInput = z.object({ machineCode: machineCode.default('DEFAULT'), idempotencyKey: z.string().uuid(), items: z.array(z.object({ productId: objectId, size: z.string().trim().min(1).max(30), qty: z.number().int().min(1).max(20) }).strict()).min(1).max(30), phone: z.string().trim().optional().default(''), customerName: z.string().trim().max(80).optional().default('') }).strict();
 export async function calculateOrder(input, machineId = 'default') {
   const products = await Product.find({ _id: { $in: input.items.map(i => i.productId) }, machineId, deleted: false });
   const items = input.items.map(i => {
