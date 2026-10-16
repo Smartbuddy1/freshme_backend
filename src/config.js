@@ -5,7 +5,21 @@ dotenv.config({ path: fileURLToPath(new URL('../.env', import.meta.url)), quiet:
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
-  DATABASE_URL: z.string().url().refine(v => /^postgres(ql)?:\/\//.test(v), 'PostgreSQL URL required'),
+  DATABASE_URL: z.preprocess(v => {
+    if (typeof v !== 'string') return v;
+    const match = v.match(/^(postgres(?:ql)?:\/\/)([^/]+)(.*)$/);
+    if (!match) return v;
+    const lastAt = match[2].lastIndexOf('@');
+    if (lastAt === -1) return v;
+    const auth = match[2].slice(0, lastAt);
+    const hostPart = match[2].slice(lastAt + 1);
+    const colon = auth.indexOf(':');
+    if (colon === -1) return v;
+    const user = auth.slice(0, colon);
+    const pass = auth.slice(colon + 1);
+    const encodedPass = encodeURIComponent(decodeURIComponent(pass));
+    return `${match[1]}${user}:${encodedPass}@${hostPart}${match[3]}`;
+  }, z.string().url().refine(v => /^postgres(ql)?:\/\//.test(v), 'PostgreSQL URL required')),
   DATABASE_SSL: z.enum(['verify-full', 'disable']).default('verify-full'),
   DATABASE_CA_CERT: z.string().optional(),
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(50).default(10),
