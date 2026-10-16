@@ -10,6 +10,7 @@ import { asyncRoute, HttpError, objectId, dateString, istDate, dayRange, csvCell
 import { receiptPayload } from './payments.js';
 import { adminMachine, ownerOnly, settingsId } from './machines.js';
 import { managementRoutes, passwordInput } from './management.js';
+import { transaction } from './database.js';
 const sizes = z.array(z.object({ label: z.string().trim().min(1).max(30), price: z.number().int().min(1).max(10000) }).strict()).min(1).max(3).refine(s => new Set(s.map(i => i.label)).size === s.length, 'Size names must be unique');
 const productInput = z.object({ name: z.string().trim().min(1).max(80), category: z.string().trim().min(1).max(40), flavorColor: z.string().regex(/^#[a-f\d]{6}$/i), imageUrl: z.string().refine(v => v === '' || isProductImageUrl(v), 'Use an uploaded product image').default(''), sizes, available: z.boolean(), sortOrder: z.number().int().min(0).max(10000) }).strict();
 const settingsInput = z.object({ shopName: z.string().trim().min(1).max(60), tagline: z.string().trim().max(120), acceptingOrders: z.boolean(), receiptHeader:z.string().trim().max(120).default(''), receiptFooter:z.string().trim().max(120).default('Thank you!'), prepCopy:z.boolean().default(false), batchSize:z.number().int().min(1).max(20).default(5) }).strict();
@@ -20,7 +21,7 @@ export async function withPrintStatus(orders) {
 }
 export function adminRouter(config, imageStorage) {
   const router = Router();
-  const cookie = { httpOnly: true, secure: config.NODE_ENV === 'production', sameSite: 'strict', path: '/api/admin' };
+  const cookie = { httpOnly: true, secure: config.NODE_ENV === 'production', sameSite: 'strict', path: process.env.COOKIE_PATH || '/' };
   router.use((req, res, next) => {
     if (!['GET','HEAD','OPTIONS'].includes(req.method)) {
       const origin = req.get('origin');
@@ -59,7 +60,7 @@ export function adminRouter(config, imageStorage) {
       paymentSummary(dayRange(istDate()), req.machine._id),
       PrintJob.countDocuments({ machineId:req.machine._id, status: { $in: ['PENDING','PRINTING'] } }), PrintJob.countDocuments({ machineId:req.machine._id, status: 'FAILED' }), Settings.findById(settingsId(req.machine._id)).lean(), Order.find({machineId:req.machine._id}).sort({ createdAt: -1 }).limit(10).lean()
     ]);
-    const printerStatus = !settings.agentLastSeenAt || Date.now() - settings.agentLastSeenAt > 20000 ? 'Agent not running' : settings.agentPrinterStatus;
+    const printerStatus = !settings.agentLastSeenAt || Date.now() - settings.agentLastSeenAt > 30000 ? 'Agent not running' : settings.agentPrinterStatus;
     res.json({ todayOrders: stats[0]?.count || 0, revenue: stats[0]?.revenue || 0, refundedOrders: stats[0]?.refundedOrders || 0, pendingPrints, failedPrints, printerStatus, orders: await withPrintStatus(orders) });
   }));
   router.get('/products', ownerOnly, asyncRoute(async (req, res) => res.json(await Product.find({ machineId:req.machine._id, deleted: false }).sort({ sortOrder: 1 }))));
@@ -110,6 +111,14 @@ export function adminRouter(config, imageStorage) {
   }));
   router.get('/reports', ownerOnly, asyncRoute(async(req,res)=>{const {filter}=await payments(req);res.json({machine:req.machine.code, ...(await paymentSummary(filter.paidAt,req.machine._id))[0]});}));
   router.get('/settings', ownerOnly, asyncRoute(async (req, res) => res.json(await Settings.findById(settingsId(req.machine._id)))));
-  router.put('/settings', ownerOnly, asyncRoute(async (req, res) => res.json(await Settings.findByIdAndUpdate(settingsId(req.machine._id), { $set: settingsInput.parse(req.body) }, { new: true }))));
+  router.put('/settings', ownerOnly, asyncRoute(async (req, res) => {
+    const body=settingsInput.parse(req.body);
+    await transaction(async client=>{
+      await client.query('UPDATE fresh_me.machines SET name=$2,"updatedAt"=now() WHERE _id=$1',[req.machine._id,body.shopName]);
+      const keys=Object.keys(body);
+      await client.query('UPDATE fresh_me.settings SET '+keys.map((k,i)=>'"'+k+'"=$'+(i+2)).join(',')+',"updatedAt"=now() WHERE _id=$1',[settingsId(req.machine._id),...Object.values(body)]);
+    });
+    res.json(await Settings.findById(settingsId(req.machine._id)));
+  }));
   return router;
 }
