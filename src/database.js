@@ -21,7 +21,7 @@ export async function connectDatabase(config) {
         ? { ca: await readFile(new URL('../certs/supabase-ca.crt', import.meta.url), 'utf8') } : {})
   };
   pool = new pg.Pool({ connectionString: url.toString(), ssl, max: config.DATABASE_POOL_MAX || 10,
-    connectionTimeoutMillis: 10000, idleTimeoutMillis: 30000, statement_timeout: 15000,
+    connectionTimeoutMillis: 10000, idleTimeoutMillis: 300000, statement_timeout: 15000,
     application_name: 'fresh-me' });
   pool.on('error', error => console.error(`Database idle connection failed (${error.code || 'connection error'})`));
   try { await pool.query('SELECT 1'); } catch (error) { await disconnectDatabase(); throw error; }

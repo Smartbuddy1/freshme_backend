@@ -63,10 +63,18 @@ export function createApp({ config, gateway, logger, imageStorage = createImageS
   // Separate shared-NAT budgets: payment confirmation cannot be starved by cart requests.
   const limit = maximum => rateLimit({ windowMs: 60000, limit: maximum, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Too many requests. Please wait one minute.' } });
   const publicPost = limit(120), paymentPost = limit(300);
+  const menuCache = new Map();
   app.get('/api/menu', asyncRoute(async (req, res) => {
-    const machine = await resolveMachine(req.query.machineCode || 'DEFAULT');
+    const code = (req.query.machineCode || 'DEFAULT').toUpperCase();
+    const cached = menuCache.get(code);
+    if (cached && Date.now() - cached.time < 10000) {
+      return res.json(cached.data);
+    }
+    const machine = await resolveMachine(code);
     const [products, settings] = await Promise.all([Product.find({ machineId: machine._id, deleted: false }).sort({ available: -1, sortOrder: 1 }).lean(), machineSettings(machine._id)]);
-    res.json({ machine: publicMachine(machine), products: products.map(p => ({ ...p, slotCode: `S${String(p.sortOrder + 1).padStart(2, '0')}` })), settings: { ...publicSettings(settings), isDemo: Boolean(gateway.isDemo) } });
+    const data = { machine: publicMachine(machine), products: products.map(p => ({ ...p, slotCode: `S${String(p.sortOrder + 1).padStart(2, '0')}` })), settings: { ...publicSettings(settings), isDemo: Boolean(gateway.isDemo) } };
+    menuCache.set(code, { time: Date.now(), data });
+    res.json(data);
   }));
   app.post('/api/orders', publicPost, asyncRoute(async (req, res) => res.status(201).json(await createOrder(orderInput.parse(req.body), gateway, config))));
   if (config.NODE_ENV !== 'production' && gateway.isDemo) {
@@ -90,12 +98,17 @@ export function createApp({ config, gateway, logger, imageStorage = createImageS
     if (payment.order_id !== order.razorpayOrderId || payment.id !== body.paymentId) throw new HttpError(400, 'Payment does not belong to this order');
     const paid = await finalizePayment(payment); res.json({ orderId: paid._id, orderCode: paid.orderCode, tokenNo: paid.tokenNo, status: paid.status });
   }));
-  app.get('/api/orders/:id', asyncRoute(async (req, res) => {
+  // Bound fallback gateway reads when phones repeatedly poll an unpaid order.
+  const reconciliationChecks=new Map();
+  app.get('/api/orders/:id', limit(300), asyncRoute(async (req, res) => {
     const isObjectId = /^[a-f\d]{24}$/i.test(req.params.id);
     const query = isObjectId ? { _id: req.params.id } : { orderCode: req.params.id.toUpperCase() };
     let order = await Order.findOne(query).select('machineId orderCode tokenNo tokenDate status items total createdAt razorpayOrderId').lean();
     if (!order) throw new HttpError(404, 'Order not found');
-    if (order.status === 'PENDING_PAYMENT' && order.razorpayOrderId && !gateway.isDemo && gateway?.orders?.fetch) {
+    if (order.status === 'PENDING_PAYMENT' && order.razorpayOrderId && !gateway.isDemo && gateway?.orders?.fetch && gateway.orders.fetchPayments && Date.now()-(reconciliationChecks.get(order._id)||0)>=10000) {
+      reconciliationChecks.delete(order._id);
+      reconciliationChecks.set(order._id,Date.now());
+      if(reconciliationChecks.size>1000)reconciliationChecks.delete(reconciliationChecks.keys().next().value);
       try {
         const remote = await gateway.orders.fetch(order.razorpayOrderId);
         if (remote.status === 'paid') {
@@ -110,7 +123,10 @@ export function createApp({ config, gateway, logger, imageStorage = createImageS
     }
     const latest = await PrintJob.findOne({ orderId: order._id }).sort({ createdAt: -1, _id: -1 });
     const machine = await Machine.findById(order.machineId);
-    res.json({ ...order, machine: publicMachine(machine), orderId: order._id, printed: latest?.status === 'PRINTED' });
+    // Reconciliation returns a complete database row. Never spread that row into
+    // a public response: it contains phone, customer name and checkout secrets.
+    const {_id,orderCode,tokenNo,tokenDate,status,items,total,createdAt}=order;
+    res.json({ _id,orderId:_id,orderCode,tokenNo,tokenDate,status,items,total,createdAt,machine:publicMachine(machine),printed:latest?.status==='PRINTED' });
   }));
   app.use('/api/agent', agentRouter(config)); app.use('/api/admin', adminRouter(config, imageStorage));
   app.use('/api', (req, res, next) => next(new HttpError(404, 'Endpoint not found')));
