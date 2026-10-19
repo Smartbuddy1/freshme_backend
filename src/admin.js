@@ -70,7 +70,7 @@ export function adminRouter(config, imageStorage, invalidateMenu=()=>{}) {
       PrintJob.countDocuments({ shopId:req.shopId, status: { $in: ['PENDING','PRINTING'] } }), PrintJob.countDocuments({ shopId:req.shopId, status: 'FAILED' }), Settings.findById(req.shopId).lean(), Order.find({shopId:req.shopId}).sort({ createdAt: -1 }).limit(10).lean()
     ]);
     const printerStatus = !settings.agentLastSeenAt || Date.now() - settings.agentLastSeenAt > 30000 ? 'Agent not running' : settings.agentPrinterStatus;
-    res.json({ shopId:req.shopId,enabled:req.shop.enabled,agentLastSeenAt:settings.agentLastSeenAt,agentPrinterStatus:settings.agentPrinterStatus, todayOrders: stats[0]?.count || 0, revenue: stats[0]?.revenue || 0, refundedOrders: stats[0]?.refundedOrders || 0, pendingPrints, failedPrints, printerStatus, orders: await withPrintStatus(orders) });
+    res.json({ shopId:req.shopId, shopSlug:req.shop.slug, shopName:req.shop.name, enabled:req.shop.enabled, agentLastSeenAt:settings.agentLastSeenAt, agentPrinterStatus:settings.agentPrinterStatus, todayOrders: stats[0]?.count || 0, revenue: stats[0]?.revenue || 0, refundedOrders: stats[0]?.refundedOrders || 0, pendingPrints, failedPrints, printerStatus, orders: await withPrintStatus(orders) });
   }));
   router.get('/products', asyncRoute(async (req, res) => res.json(await Product.find({ shopId:req.shopId, deleted: false }).sort({ sortOrder: 1 }))));
   router.post('/products', asyncRoute(async (req, res) => res.status(201).json(await Product.create({ ...productInput.parse(req.body), shopId:req.shopId }))));
