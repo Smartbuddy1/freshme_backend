@@ -13,6 +13,7 @@
     "simulate-payment": "node scripts/simulate-payment.js",
     "db:check": "node scripts/database.js",
     "db:migrate": "node scripts/database.js --migrate",
+    "migrate": "node scripts/database.js --migrate",
     "production:check": "node scripts/preflight.js"
   },
   "dependencies": {
