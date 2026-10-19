@@ -139,6 +139,7 @@ export function createApp({ config, gateway, logger, imageStorage = createImageS
   const staticOptions={ setHeaders(res, path) { if (path.includes('assets')) res.set('Cache-Control', 'public,max-age=31536000,immutable'); else res.set('Cache-Control', 'no-cache, no-store, must-revalidate'); } };
   app.use('/freshme',express.static(dist,staticOptions));
   app.use(express.static(dist,staticOptions));
+  app.use(['/assets', '/freshme/assets'], (req, res) => res.status(404).type('text/plain').send('Asset not found'));
   app.get('*', (req, res, next) => {
     res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.sendFile(`${dist}/index.html`, e => e && next(new HttpError(404, 'Client build missing. Run npm run build.')));
