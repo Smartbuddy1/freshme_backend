@@ -44,7 +44,7 @@ function repository(table) {
     lean() { return this; }
     sql() {
       const values = [];
-      const selected = this.options.select ? [...new Set(['_id', ...this.options.select])] : [...fields].filter(f => f !== 'phone');
+      const selected = this.options.select ? [...new Set(['_id', ...this.options.select])] : [...fields];
       let text = 'SELECT ' + selected.map(column).join(',') + ' FROM ' + name + ' WHERE ' + where(this.filter, values);
       const sort = ordering(this.options.sort);
       if (sort) text += ' ORDER BY ' + sort;
