@@ -14,9 +14,9 @@ export async function seed(config, { menuOnly = false } = {}) {
   await client.query('SELECT pg_advisory_xact_lock(706318241)');
   if (!menuOnly) {
     const email = config.ADMIN_EMAIL.toLowerCase();
-    if (!(await client.query('SELECT 1 FROM fresh_me.admins WHERE email=$1', [email])).rowCount) await Admin.create({ email, passwordHash: await bcrypt.hash(config.ADMIN_PASSWORD, 12) }, client);
+    if (!(await client.query('SELECT 1 FROM fresh_me.admins WHERE email=$1', [email])).rowCount) await Admin.create({ email, passwordHash: await bcrypt.hash(config.ADMIN_PASSWORD, 12),role:'SUPER_ADMIN',shopId:null }, client);
   }
-  for (const p of sampleProducts) if (!(await client.query('SELECT 1 FROM fresh_me.products WHERE name=$1', [p.name])).rowCount) await Product.create(p, client);
+  for (const p of sampleProducts) if (!(await client.query('SELECT 1 FROM fresh_me.products WHERE name=$1 AND "shopId"=$2', [p.name,'shop'])).rowCount) await Product.create({...p,shopId:'shop'}, client);
   });
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

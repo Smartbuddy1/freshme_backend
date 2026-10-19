@@ -1,11 +1,13 @@
 # Fresh Me backend
 
+**Super Admin / multi-client release:** see [MULTI_CLIENT_UPGRADE.md](deploy/MULTI_CLIENT_UPGRADE.md) for migration 004, `npm run superadmin:setup`, shared Razorpay payments, client-specific QR URLs and printer onboarding. This is the current deployment guide for the platform; the older single-shop guide describes migration 003 only.
+
 Copy this folder to EC2 as `fresheme_backned`. It contains the complete API,
 SQL migrations, database certificate, dependency lockfile, env templates and
 PM2/Nginx deployment files. No frontend, agent or parent package.json is needed.
 
-For existing installations, read [the single-shop upgrade guide](deploy/SINGLE_SHOP_UPGRADE.md)
-before applying migration 002 or updating the frontend/agents. Local fixes are not
+For existing installations, read [the multi-client upgrade guide](deploy/MULTI_CLIENT_UPGRADE.md)
+before applying migration 004 or updating the frontend/agents. Local fixes are not
 automatically published to GitHub.
 
 To download this backend onto EC2:

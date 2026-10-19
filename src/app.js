@@ -10,11 +10,13 @@ import { fileURLToPath } from 'node:url';
 import { Product, Settings, Order, PrintJob } from './models.js';
 import { orderInput, createOrder, finalizePayment, recordRefund } from './payments.js';
 import { asyncRoute, HttpError, validSignature, objectId, publicSettings, isAllowedOrigin } from './utils.js';
+import {publicShop,shopSlug,shopView} from './shops.js';
 import { agentRouter } from './agent-api.js';
 import { adminRouter } from './admin.js';
 import { createImageStorage, imageCacheControl } from './images.js';
 export function createApp({ config, gateway, logger, imageStorage = createImageStorage(config) }) {
   const app = express(); app.set('trust proxy', config.TRUST_PROXY); app.disable('x-powered-by');
+  app.use(compression());
   app.use(helmet({
     contentSecurityPolicy: {
       directives: {
@@ -62,24 +64,26 @@ export function createApp({ config, gateway, logger, imageStorage = createImageS
   // Separate shared-NAT budgets: payment confirmation cannot be starved by cart requests.
   const limit = maximum => rateLimit({ windowMs: 60000, limit: maximum, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Too many requests. Please wait one minute.' } });
   const publicPost = limit(120), paymentPost = limit(300);
-  let menuCache;
-  const invalidateMenu=()=>{menuCache=undefined;};
+  const menuCache=new Map();
+  const invalidateMenu=id=>{menuCache.delete(id);};
   app.get('/api/menu',asyncRoute(async(req,res)=>{
-    z.object({}).strict().parse(req.query);
-    let cached=menuCache;
+    const q=z.object({shopSlug:shopSlug.optional()}).strict().parse(req.query);
+    const shop=await publicShop(q.shopSlug);
+    let cached=menuCache.get(shop._id);
     if(!cached || Date.now()-cached.time>=10000){
       cached={time:Date.now()};
-      cached.products=Promise.resolve(Product.find({deleted:false}).sort({available:-1,sortOrder:1}).lean()).catch(error=>{if(menuCache===cached)invalidateMenu();throw error;});
-      menuCache=cached;
+      cached.products=Promise.resolve(Product.find({shopId:shop._id,deleted:false}).sort({available:-1,sortOrder:1}).lean()).catch(error=>{if(menuCache.get(shop._id)===cached)invalidateMenu(shop._id);throw error;});
+      menuCache.set(shop._id,cached);if(menuCache.size>200)menuCache.delete(menuCache.keys().next().value);
     }
-    const [products,settings]=await Promise.all([cached.products,Settings.findById('shop')]);
-    res.json({products,settings:{...publicSettings(settings),isDemo:Boolean(gateway.isDemo)}});
+    const [products,settings]=await Promise.all([cached.products,Settings.findById(shop._id)]);
+    res.json({products,shop:shopView(shop),settings:{...publicSettings(settings),isDemo:Boolean(gateway.isDemo)}});
   }));
   app.post('/api/orders', publicPost, asyncRoute(async (req, res) => res.status(201).json(await createOrder(orderInput.parse(req.body), gateway, config))));
   if (config.NODE_ENV !== 'production' && gateway.isDemo) {
     app.post('/api/payments/demo-confirm', paymentPost, asyncRoute(async (req, res) => {
-      const body = z.object({ orderId: objectId }).strict().parse(req.body);
-      const order = await Order.findById(body.orderId);
+      const body = z.object({ orderId: objectId, shopSlug:shopSlug.optional() }).strict().parse(req.body);
+      const shop=await publicShop(body.shopSlug,{allowDisabled:true});
+      const order = await Order.findOne({_id:body.orderId,shopId:shop._id});
       if (!order) throw new HttpError(404, 'Order not found');
       if (!order.razorpayOrderId) throw new HttpError(400, 'Order has no associated gateway ID');
       const paymentId = `pay_demo_${Date.now()}`;
@@ -90,8 +94,9 @@ export function createApp({ config, gateway, logger, imageStorage = createImageS
     }));
   }
   app.post('/api/payments/verify', paymentPost, asyncRoute(async (req, res) => {
-    const body = z.object({ orderId: objectId, razorpayOrderId: z.string().min(1).max(100), paymentId: z.string().min(1).max(100), signature: z.string().max(128) }).strict().parse(req.body);
-    const order = await Order.findById(body.orderId);
+    const body = z.object({ orderId: objectId, shopSlug:shopSlug.optional(), razorpayOrderId: z.string().min(1).max(100), paymentId: z.string().min(1).max(100), signature: z.string().max(128) }).strict().parse(req.body);
+    const shop=await publicShop(body.shopSlug,{allowDisabled:true});
+      const order = await Order.findOne({_id:body.orderId,shopId:shop._id});
     if (!order || order.razorpayOrderId !== body.razorpayOrderId || !validSignature(`${order.razorpayOrderId}|${body.paymentId}`, body.signature, config.RAZORPAY_KEY_SECRET)) throw new HttpError(400, 'Payment verification failed');
     const payment = await gateway.payments.fetch(body.paymentId);
     if (payment.order_id !== order.razorpayOrderId || payment.id !== body.paymentId) throw new HttpError(400, 'Payment does not belong to this order');
@@ -100,9 +105,11 @@ export function createApp({ config, gateway, logger, imageStorage = createImageS
   // Bound fallback gateway reads when phones repeatedly poll an unpaid order.
   const reconciliationChecks=new Map();
   app.get('/api/orders/:id', limit(300), asyncRoute(async (req, res) => {
+    const q=z.object({shopSlug:shopSlug.optional()}).strict().parse(req.query);
+    const shop=await publicShop(q.shopSlug,{allowDisabled:true});
     const isObjectId = /^[a-f\d]{24}$/i.test(req.params.id);
     const query = isObjectId ? { _id: req.params.id } : { orderCode: req.params.id.toUpperCase() };
-    let order = await Order.findOne(query).select('orderCode tokenNo tokenDate status items total createdAt razorpayOrderId').lean();
+    let order = await Order.findOne({...query,shopId:shop._id}).select('orderCode tokenNo tokenDate status items total createdAt razorpayOrderId').lean();
     if (!order) throw new HttpError(404, 'Order not found');
     if (order.status === 'PENDING_PAYMENT' && order.razorpayOrderId && !gateway.isDemo && gateway?.orders?.fetch && gateway.orders.fetchPayments && Date.now()-(reconciliationChecks.get(order._id)||0)>=10000) {
       reconciliationChecks.delete(order._id);
@@ -124,13 +131,12 @@ export function createApp({ config, gateway, logger, imageStorage = createImageS
     // Reconciliation returns a complete database row. Never spread that row into
     // a public response: it contains phone, customer name and checkout secrets.
     const {_id,orderCode,tokenNo,tokenDate,status,items,total,createdAt}=order;
-    res.json({ _id,orderId:_id,orderCode,tokenNo,tokenDate,status,items,total,createdAt,shopName:(await Settings.findById('shop')).shopName,printed:latest?.status==='PRINTED' });
+    res.json({ _id,orderId:_id,orderCode,tokenNo,tokenDate,status,items,total,createdAt,shop:shopView(shop),shopName:shop.name,printed:latest?.status==='PRINTED' });
   }));
   app.use('/api/agent', agentRouter(config)); app.use('/api/admin', adminRouter(config, imageStorage, invalidateMenu));
   app.use('/api', (req, res, next) => next(new HttpError(404, 'Endpoint not found')));
   const dist = fileURLToPath(new URL('../../frontend/dist/', import.meta.url));
   const staticOptions={ setHeaders(res, path) { if (path.includes('assets')) res.set('Cache-Control', 'public,max-age=31536000,immutable'); else res.set('Cache-Control', 'no-cache, no-store, must-revalidate'); } };
-  app.use(compression());
   app.use('/freshme',express.static(dist,staticOptions));
   app.use(express.static(dist,staticOptions));
   app.get('*', (req, res, next) => {

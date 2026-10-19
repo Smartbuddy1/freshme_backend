@@ -3,9 +3,11 @@ import { database, transaction } from './database.js';
 import { z } from 'zod';
 import { Product, Order, Settings, PrintJob, Refund } from './models.js';
 import { HttpError, istDate, objectId } from './utils.js';
-export const orderInput = z.object({ idempotencyKey: z.string().uuid(), items: z.array(z.object({ productId: objectId, size: z.string().trim().min(1).max(30), qty: z.number().int().min(1).max(20) }).strict()).min(1).max(30), phone: z.string().trim().regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit mobile number').optional().or(z.literal('')).default(''), customerName: z.string().trim().max(80).optional().default('') }).strict();
-export async function calculateOrder(input) {
-  const products = await Product.find({ _id: { $in: input.items.map(i => i.productId) }, deleted: false });
+import {publicShop,shopSlug} from './shops.js';
+import {notifyNewJob} from './agent-api.js';
+export const orderInput = z.object({ shopSlug:shopSlug.optional(), idempotencyKey: z.string().uuid(), items: z.array(z.object({ productId: objectId, size: z.string().trim().min(1).max(30), qty: z.number().int().min(1).max(20) }).strict()).min(1).max(30), phone: z.string().trim().regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit mobile number').optional().or(z.literal('')).default(''), customerName: z.string().trim().max(80).optional().default('') }).strict();
+export async function calculateOrder(input,shopId='shop') {
+  const products = await Product.find({ shopId, _id: { $in: input.items.map(i => i.productId) }, deleted: false });
   const items = input.items.map(i => {
     const p = products.find(p => String(p._id) === i.productId);
     const size = p?.sizes.find(s => s.label === i.size);
@@ -17,16 +19,19 @@ export async function calculateOrder(input) {
   return { items, total };
 }
 export async function createOrder(input, gateway, config) {
-  const requestHash = crypto.createHash('sha256').update(JSON.stringify({ items: input.items, phone: input.phone, customerName: input.customerName })).digest('hex');
+  const shop=await publicShop(input.shopSlug,{allowDisabled:true});
+  const requestHash = crypto.createHash('sha256').update(JSON.stringify({ shopId:shop._id, items: input.items, phone: input.phone, customerName: input.customerName })).digest('hex');
   let order = await Order.findOne({ idempotencyKey: input.idempotencyKey });
   if (!order) {
-    const settings = await Settings.findById('shop');
+    const settings = await Settings.findById(shop._id);
+    if(!shop.enabled)throw new HttpError(404,'Shop not found or unavailable');
     if (!settings?.acceptingOrders) throw new HttpError(409, 'Shop is resting, back soon');
-    const calculated = await calculateOrder(input);
-    try { order = await Order.create({ ...input, ...calculated, requestHash }); }
+    const calculated = await calculateOrder(input,shop._id);
+    try { order = await Order.create({ ...input, shopId:shop._id, ...calculated, requestHash }); }
     catch (e) { if (e.code !== '23505') throw e; order = await Order.findOne({ idempotencyKey: input.idempotencyKey }); }
   }
-  if (order.requestHash !== requestHash) throw new HttpError(409, 'This checkout key belongs to a different cart');
+  const legacyHash=shop._id==='shop'?crypto.createHash('sha256').update(JSON.stringify({items:input.items,phone:input.phone,customerName:input.customerName})).digest('hex'):null;
+  if (order.shopId !== shop._id || (order.requestHash !== requestHash && order.requestHash !== legacyHash)) throw new HttpError(409, 'This checkout key belongs to a different cart');
   if (order.status === 'EXPIRED' || (order.status === 'PENDING_PAYMENT' && Date.now() - order.createdAt > 30 * 60000)) throw new HttpError(410, 'Checkout expired. Please try again.');
   if (order.status === 'PENDING_PAYMENT' && order.razorpayOrderId && !gateway?.isDemo && gateway?.orders?.fetch) {
     try {
@@ -78,14 +83,15 @@ export async function finalizePayment(payment) {
     }
     const now = new Date(); const tokenDate = istDate(now);
     const nextCounter = async id => (await client.query('INSERT INTO fresh_me.counters (_id, seq) VALUES ($1,1) ON CONFLICT (_id) DO UPDATE SET seq=fresh_me.counters.seq+1 RETURNING seq', [id])).rows[0].seq;
-    const tokenNo = await nextCounter(tokenDate);
+    const tokenNo = await nextCounter(order.shopId==='shop'?tokenDate:`${order.shopId}:${tokenDate}`);
     const orderCode = 'ORD-' + (100 + await nextCounter('order_seq'));
     const { rows: [paid] } = await client.query(
       'UPDATE fresh_me.orders SET status=\'PAID\', "paidAt"=$2, "tokenDate"=$3, "tokenNo"=$4, "orderCode"=$5, "razorpayPaymentId"=$6, "paymentMethod"=$7, refunded=EXISTS(SELECT 1 FROM fresh_me.refunds WHERE "paymentId"=$6), "updatedAt"=now() WHERE _id=$1 RETURNING *',
       [order._id, now, tokenDate, tokenNo, orderCode, payment.id, payment.method || 'unknown']);
-    await PrintJob.create({ type: 'ORDER', orderId: paid._id, payload: receiptPayload(paid) }, client);
+    await PrintJob.create({ shopId:paid.shopId, type: 'ORDER', orderId: paid._id, payload: receiptPayload(paid) }, client);
     return paid;
   });
+  notifyNewJob(result.shopId);
   // Close the refund-before-payment race in both possible commit orders.
   if (await Refund.exists({ paymentId: payment.id })) await Order.updateOne({ _id: result._id }, { $set: { refunded: true } });
   return result;

@@ -39,7 +39,7 @@ it('does not promote formerly restricted staff when removing roles',async()=>{
     await legacySchema(client);
     await client.query("INSERT INTO fresh_me.admins(_id,email,\"passwordHash\",role) VALUES ('staff','staff@qa.invalid','fixture','MANAGER')");
   }});
-  try{expect((await database().query("SELECT disabled,\"sessionVersion\" FROM fresh_me.admins WHERE _id='staff'")).rows[0]).toMatchObject({disabled:true,sessionVersion:1});}finally{await db.stop();}
+  try{expect((await database().query("SELECT disabled,\"sessionVersion\",role,\"shopId\" FROM fresh_me.admins WHERE _id='staff'")).rows[0]).toMatchObject({disabled:true,sessionVersion:2,role:'CLIENT_ADMIN',shopId:'shop'});}finally{await db.stop();}
 });
 it('refuses to silently merge non-default business data',async()=>{
   await expect(testDatabase({beforeMigrate:async client=>{
@@ -47,4 +47,16 @@ it('refuses to silently merge non-default business data',async()=>{
     await client.query("INSERT INTO fresh_me.machines(_id,code,name) VALUES ('other','OTHER','Other')");
     await client.query("INSERT INTO fresh_me.products(_id,name,category,\"flavorColor\",sizes,\"machineId\") VALUES ('other-product','QA','QA','#aa2277','[]','other')");
   }})).rejects.toThrow('reviewed consolidation');
+});
+it('rejects an unknown release history before applying pending migrations',async()=>{
+  const db=await testDatabase();
+  try {
+    await database().query("INSERT INTO fresh_me.schema_migrations(name,checksum) VALUES ('006_per_shop_razorpay.sql','foreign-release')");
+    await database().query("DELETE FROM fresh_me.schema_migrations WHERE name='005_editable_shop_urls.sql'");
+    const before=(await database().query('SELECT name,checksum FROM fresh_me.schema_migrations ORDER BY name')).rows;
+    await expect(verifyMigrations()).rejects.toMatchObject({code:'MIGRATION_HISTORY_MISMATCH'});
+    await expect(migrate()).rejects.toMatchObject({code:'MIGRATION_HISTORY_MISMATCH'});
+    expect((await database().query('SELECT name,checksum FROM fresh_me.schema_migrations ORDER BY name')).rows).toEqual(before);
+    expect((await database().query("SELECT count(*)::int AS count FROM fresh_me.shops")).rows[0].count).toBe(1);
+  } finally {await db.stop();}
 });

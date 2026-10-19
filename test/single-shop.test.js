@@ -24,11 +24,11 @@ beforeEach(async()=>{
   app=createApp({config,gateway,logger:{error(){},info(){}},imageStorage:{}});
   cookie=(await request(app).post('/api/admin/login').send({email:'admin@qa.invalid',password})).headers['set-cookie'][0].split(';')[0];
 });
-it('removes routing, role fields and user management from the single-shop API and database',async()=>{
+it('keeps machine and manager APIs removed while exposing assigned client shop identity',async()=>{
   for(const endpoint of ['/machines','/users'])for(const method of ['get','post'])expect((await admin(method,endpoint,method==='post'?{}:undefined)).status).toBe(404);
-  expect((await admin('get','/me')).body).toEqual({email:'admin@qa.invalid'});
+  expect((await admin('get','/me')).body).toMatchObject({email:'admin@qa.invalid',role:'CLIENT_ADMIN',shopId:'shop',shop:{slug:'fresh-me'}});
   expect((await database().query("SELECT to_regclass('fresh_me.machines') AS t")).rows[0].t).toBeNull();
-  expect((await database().query("SELECT column_name FROM information_schema.columns WHERE table_schema='fresh_me' AND column_name IN ('machineId','machineIds','role')")).rows).toEqual([]);
+  expect((await database().query("SELECT column_name FROM information_schema.columns WHERE table_schema='fresh_me' AND column_name IN ('machineId','machineIds')")).rows).toEqual([]);
   expect(orderInput.safeParse(body({machineCode:'DEFAULT'})).success).toBe(false);
 });
 it('cached menus immediately reflect product edits and shop pauses',async()=>{

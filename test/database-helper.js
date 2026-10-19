@@ -30,5 +30,8 @@ export async function testDatabase({beforeMigrate} = {}) {
 }
 export async function resetDatabase() {
   await database().query('TRUNCATE fresh_me.agent_pairings, fresh_me.agent_events, fresh_me.agent_commands, fresh_me.print_jobs, fresh_me.orders, fresh_me.products, fresh_me.counters, fresh_me.admins, fresh_me.refunds');
+  await database().query("DELETE FROM fresh_me.settings WHERE _id<>'shop'");
+  await database().query("DELETE FROM fresh_me.shops WHERE _id<>'shop'");
+  await database().query("UPDATE fresh_me.shops SET enabled=true,name='Fresh Me' WHERE _id='shop'");
   await database().query(`UPDATE fresh_me.settings SET "agentKeyHash"=NULL,"keyVersion"=0,"batchSize"=5,"prepCopy"=false,"acceptingOrders"=true WHERE _id='shop'`);
 }

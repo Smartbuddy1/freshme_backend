@@ -6,10 +6,11 @@ import { database } from './database.js';
 // Parameterized SQL repositories preserve the existing HTTP data shape.
 // Nested cart snapshots and receipt payloads use JSONB; indexed fields are columns.
 const definitions = {
-  products: 'name category flavorColor imageUrl sizes available sortOrder deleted createdAt updatedAt',
-  orders: 'tokenNo tokenDate orderCode items total customerName phone status idempotencyKey requestHash razorpayOrderId razorpayPaymentId paymentMethod paidAt servedAt refunded razorpayCreateStartedAt creationError createdAt updatedAt',
-  print_jobs: 'type orderId status attempts claimedAt printedAt lastError claimId payload createdAt updatedAt',
-  admins: 'email passwordHash sessionVersion disabled', settings: 'shopName tagline acceptingOrders agentLastSeenAt agentPrinterStatus receiptHeader receiptFooter prepCopy batchSize agentVersion battery updatedAt agentKeyHash keyVersion',
+  products: 'shopId name category flavorColor imageUrl sizes available sortOrder deleted createdAt updatedAt',
+  orders: 'shopId tokenNo tokenDate orderCode items total customerName phone status idempotencyKey requestHash razorpayOrderId razorpayPaymentId paymentMethod paidAt servedAt refunded razorpayCreateStartedAt creationError createdAt updatedAt',
+  print_jobs: 'shopId type orderId status attempts claimedAt printedAt lastError claimId payload createdAt updatedAt',
+  admins: 'email passwordHash sessionVersion disabled role shopId', settings: 'shopName tagline acceptingOrders agentLastSeenAt agentPrinterStatus receiptHeader receiptFooter prepCopy batchSize agentVersion battery updatedAt agentKeyHash keyVersion',
+  shops: 'slug name enabled createdAt updatedAt', platform_settings: 'name supportEmail updatedAt',
   counters: 'seq', refunds: 'paymentId createdAt updatedAt'
 };
 const jsonFields = new Set(['items', 'sizes', 'payload']);
@@ -98,7 +99,9 @@ export const Admin = repository('admins');
 export const Settings = repository('settings');
 export const Counter = repository('counters');
 export const Refund = repository('refunds');
-export async function paymentSummary(range) {
-  const { rows } = await database().query('SELECT count(*)::integer AS count, COALESCE(sum(total),0)::bigint AS total, count(*) FILTER (WHERE refunded)::integer AS "refundedOrders" FROM fresh_me.orders WHERE "paidAt">=$1 AND "paidAt"<$2', [range.$gte, range.$lt]);
+export const Shop = repository('shops');
+export const PlatformSettings = repository('platform_settings');
+export async function paymentSummary(range, shopId = 'shop') {
+  const { rows } = await database().query('SELECT count(*)::integer AS count, COALESCE(sum(total),0)::bigint AS total, count(*) FILTER (WHERE refunded)::integer AS "refundedOrders" FROM fresh_me.orders WHERE "paidAt">=$1 AND "paidAt"<$2'+(shopId===null?'':' AND "shopId"=$3'), shopId===null?[range.$gte, range.$lt]:[range.$gte, range.$lt,shopId]);
   return [{ ...rows[0], total: Number(rows[0].total), revenue: Number(rows[0].total) }];
 }
