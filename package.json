@@ -14,7 +14,8 @@
     "db:check": "node scripts/database.js",
     "db:migrate": "node scripts/database.js --migrate",
     "migrate": "node scripts/database.js --migrate",
-    "production:check": "node scripts/preflight.js"
+    "production:check": "node scripts/preflight.js",
+    "clean:demo": "node scripts/clean-demo-data.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1151.0",
