@@ -13,6 +13,7 @@ import {platformRoutes} from './platform.js';
 import {transaction} from './database.js';
 import { agentControlRoutes, passwordInput } from './agent-controls.js';
 import { notifyNewJob } from './agent-api.js';
+import {analyticsPeriod,dailyAnalytics} from './analytics.js';
 const sizes = z.array(z.object({ label: z.string().trim().min(1).max(30), price: z.number().int().min(1).max(10000) }).strict()).min(1).max(3).refine(s => new Set(s.map(i => i.label)).size === s.length, 'Size names must be unique');
 const productInput = z.object({ name: z.string().trim().min(1).max(80), category: z.string().trim().min(1).max(40), flavorColor: z.string().regex(/^#[a-f\d]{6}$/i), imageUrl: z.string().refine(v => v === '' || isProductImageUrl(v), 'Use an uploaded product image').default(''), sizes, available: z.boolean(), sortOrder: z.number().int().min(0).max(10000) }).strict();
 const settingsInput = z.object({ shopName: z.string().trim().min(1).max(60), tagline: z.string().trim().max(120), acceptingOrders: z.boolean(), receiptHeader:z.string().trim().max(120).default(''), receiptFooter:z.string().trim().max(120).default('Thank you!'), prepCopy:z.boolean().default(false), batchSize:z.number().int().min(1).max(20).default(5) }).strict();
@@ -65,12 +66,13 @@ export function adminRouter(config, imageStorage, invalidateMenu=()=>{}) {
   agentControlRoutes(router);
   router.use((req,res,next)=>{if(!['GET','HEAD','OPTIONS'].includes(req.method)&&req.path.startsWith('/products'))res.once('finish',()=>{if(res.statusCode<400)invalidateMenu(req.shopId);});next();});
   router.get('/dashboard', asyncRoute(async (req, res) => {
-    const [stats, pendingPrints, failedPrints, settings, orders] = await Promise.all([
+    const period=analyticsPeriod(req.query);
+    const [stats, pendingPrints, failedPrints, settings, orders, analytics] = await Promise.all([
       paymentSummary(dayRange(istDate()),req.shopId),
-      PrintJob.countDocuments({ shopId:req.shopId, status: { $in: ['PENDING','PRINTING'] } }), PrintJob.countDocuments({ shopId:req.shopId, status: 'FAILED' }), Settings.findById(req.shopId).lean(), Order.find({shopId:req.shopId}).sort({ createdAt: -1 }).limit(10).lean()
+      PrintJob.countDocuments({ shopId:req.shopId, status: { $in: ['PENDING','PRINTING'] } }), PrintJob.countDocuments({ shopId:req.shopId, status: 'FAILED' }), Settings.findById(req.shopId).lean(), Order.find({shopId:req.shopId}).sort({ createdAt: -1 }).limit(10).lean(), dailyAnalytics(period,req.shopId)
     ]);
     const printerStatus = !settings.agentLastSeenAt || Date.now() - settings.agentLastSeenAt > 30000 ? 'Agent not running' : settings.agentPrinterStatus;
-    res.json({ shopId:req.shopId, shopSlug:req.shop.slug, shopName:req.shop.name, enabled:req.shop.enabled, agentLastSeenAt:settings.agentLastSeenAt, agentPrinterStatus:settings.agentPrinterStatus, todayOrders: stats[0]?.count || 0, revenue: stats[0]?.revenue || 0, refundedOrders: stats[0]?.refundedOrders || 0, pendingPrints, failedPrints, printerStatus, orders: await withPrintStatus(orders) });
+    res.json({ analytics, shopId:req.shopId, shopSlug:req.shop.slug, shopName:req.shop.name, enabled:req.shop.enabled, agentLastSeenAt:settings.agentLastSeenAt, agentPrinterStatus:settings.agentPrinterStatus, todayOrders: stats[0]?.count || 0, revenue: stats[0]?.revenue || 0, refundedOrders: stats[0]?.refundedOrders || 0, pendingPrints, failedPrints, printerStatus, orders: await withPrintStatus(orders) });
   }));
   router.get('/products', asyncRoute(async (req, res) => res.json(await Product.find({ shopId:req.shopId, deleted: false }).sort({ sortOrder: 1 }))));
   router.post('/products', asyncRoute(async (req, res) => res.status(201).json(await Product.create({ ...productInput.parse(req.body), shopId:req.shopId }))));

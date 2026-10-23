@@ -5,6 +5,7 @@ import {Shop,Settings,Admin,Order,PrintJob,PlatformSettings,paymentSummary} from
 import {asyncRoute,HttpError,istDate,dayRange,dateString,csvCell,objectId} from './utils.js';
 import {superOnly,shopSlug,shopView} from './shops.js';
 import {passwordInput} from './agent-controls.js';
+import {analyticsPeriod,dailyAnalytics} from './analytics.js';
 const emailInput=z.string().trim().email().max(254).transform(v=>v.toLowerCase());
 const clientInput=z.object({name:z.string().trim().min(1).max(60),slug:shopSlug,email:emailInput,password:passwordInput,tagline:z.string().trim().max(120).default('Sip and chill.')}).strict();
 const rangeInput=z.object({from:dateString.default(istDate()),to:dateString.default(istDate()),shopId:z.string().min(1).max(80).optional(),page:z.coerce.number().int().min(1).max(100000).default(1)}).strict();
@@ -28,14 +29,9 @@ function conflict(error){if(error.code==='23505')throw new HttpError(409,'That s
 export function platformRoutes(router){
   router.use('/platform',superOnly);
   router.get('/platform/dashboard',asyncRoute(async(req,res)=>{
-    const {days}=z.object({days:z.coerce.number().int().refine(n=>[7,30,90].includes(n),'Select 7, 30 or 90 days').default(7)}).strict().parse(req.query);
-    const to=istDate(),from=new Date(Date.parse(to+'T00:00:00Z')-(days-1)*86400000).toISOString().slice(0,10);
-    const range=dayRange(to),period={$gte:dayRange(from).$gte,$lt:range.$lt};
-    const [shops,totals,pending,failed,byShop,periodShops,series]=await Promise.all([Shop.find(),paymentSummary(range,null),PrintJob.countDocuments({status:{$in:['PENDING','PRINTING']}}),PrintJob.countDocuments({status:'FAILED'}),reportData(range),reportData(period),database().query(`SELECT to_char("paidAt" AT TIME ZONE 'Asia/Kolkata','YYYY-MM-DD') AS date,count(*)::integer AS orders,COALESCE(sum(total),0)::bigint AS revenue FROM fresh_me.orders WHERE "paidAt">=$1 AND "paidAt"<$2 GROUP BY 1 ORDER BY 1`,[period.$gte,period.$lt])]);
-    const values=new Map(series.rows.map(row=>[row.date,{orders:row.orders,revenue:Number(row.revenue)}]));
-    const daily=Array.from({length:days},(_,i)=>{const date=new Date(Date.parse(from+'T00:00:00Z')+i*86400000).toISOString().slice(0,10);return {date,orders:0,revenue:0,...values.get(date)};});
-    const periodTotals=daily.reduce((sum,row)=>({orders:sum.orders+row.orders,revenue:sum.revenue+row.revenue}),{orders:0,revenue:0});
-    res.json({clients:shops.length,activeClients:shops.filter(s=>s.enabled).length,todayOrders:totals[0].count,revenue:totals[0].revenue,pendingPrints:pending,failedPrints:failed,byShop,analytics:{from,to,days,daily,byShop:periodShops,totals:periodTotals}});
+    const period=analyticsPeriod(req.query),range=dayRange(period.to);
+    const [shops,totals,pending,failed,byShop,periodShops,analytics]=await Promise.all([Shop.find(),paymentSummary(range,null),PrintJob.countDocuments({status:{$in:['PENDING','PRINTING']}}),PrintJob.countDocuments({status:'FAILED'}),reportData(range),reportData(period.range),dailyAnalytics(period)]);
+    res.json({clients:shops.length,activeClients:shops.filter(s=>s.enabled).length,todayOrders:totals[0].count,revenue:totals[0].revenue,pendingPrints:pending,failedPrints:failed,byShop,analytics:{...analytics,byShop:periodShops}});
   }));
   router.get('/platform/clients',asyncRoute(async(req,res)=>{
     const {rows}=await database().query(`SELECT s._id AS id,s.slug,s.name,s.enabled,s."createdAt",c."acceptingOrders",c."agentPrinterStatus",c."agentLastSeenAt",c."agentVersion",

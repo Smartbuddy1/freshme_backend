@@ -114,6 +114,33 @@ it('charts all clients in IST days with zero-filled dates and bounded periods',a
   for(const days of [0,8,366,'bad'])expect((await auth('get','/platform/dashboard?days='+days)).status).toBe(400);
   expect((await auth('get','/platform/dashboard?days=7',undefined,client)).status).toBe(403);
 });
+it('serves the same daily analytics for each admin scope without leaking another shop',async()=>{
+  const first=await paid(a,pa),yesterday=await paid(a,pa),outside=await paid(a,pa);
+  await paid(b,pb);
+  const start=new Date(istDate()+'T00:00:00+05:30');
+  await Order.updateOne({_id:first.paid._id},{paidAt:start,refunded:true});
+  await Order.updateOne({_id:yesterday.paid._id},{paidAt:new Date(+start-1)});
+  await Order.updateOne({_id:outside.paid._id},{paidAt:new Date(+start-7*86400000)});
+  await createOrder(input(a,pa),gateway,config);
+  expect((await auth('get','/dashboard?days=7',undefined,client,b._id)).status).toBe(403);
+  const result=await auth('get','/dashboard?days=7',undefined,client);
+  expect(result.status).toBe(200);
+  expect(result.body.shopId).toBe(a._id);
+  const series=result.body.analytics;
+  expect(series.daily).toHaveLength(7);
+  expect(series.totals).toEqual({orders:2,revenue:20});
+  expect(series.daily.at(-1)).toEqual({date:istDate(),orders:1,revenue:10});
+  expect(series.daily.at(-2)).toMatchObject({orders:1,revenue:10});
+  expect(series.daily.slice(0,-2).every(row=>row.orders===0&&row.revenue===0)).toBe(true);
+  expect((await auth('get','/dashboard?days=7',undefined,owner,a._id)).body.analytics).toEqual(series);
+  expect((await auth('get','/dashboard?days=7',undefined,owner,b._id)).body.analytics.totals).toEqual({orders:1,revenue:10});
+  for(const days of [30,90]){
+    const response=await auth('get','/dashboard?days='+days,undefined,client);
+    expect(response.body.analytics.daily).toHaveLength(days);
+    expect(response.body.analytics.totals).toEqual({orders:3,revenue:30});
+  }
+  for(const days of [0,8,366,'bad'])expect((await auth('get','/dashboard?days='+days,undefined,client)).status).toBe(400);
+});
 it('creates client and admin atomically, allows editable shop IDs and prevents super role assignment',async()=>{
   const body={name:'Charlie Shop',slug:'charlie-shop',email:'charlie@qa.invalid',password};
   const created=await auth('post','/platform/clients',body);expect(created.status).toBe(201);const id=created.body.id;
