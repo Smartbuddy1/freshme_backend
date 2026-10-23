@@ -14,6 +14,7 @@ import {transaction} from './database.js';
 import { agentControlRoutes, passwordInput } from './agent-controls.js';
 import { notifyNewJob } from './agent-api.js';
 import {analyticsPeriod,dailyAnalytics} from './analytics.js';
+import {accountLoginLimit,passwordChangeLimit} from './auth-limits.js';
 const sizes = z.array(z.object({ label: z.string().trim().min(1).max(30), price: z.number().int().min(1).max(10000) }).strict()).min(1).max(3).refine(s => new Set(s.map(i => i.label)).size === s.length, 'Size names must be unique');
 const productInput = z.object({ name: z.string().trim().min(1).max(80), category: z.string().trim().min(1).max(40), flavorColor: z.string().regex(/^#[a-f\d]{6}$/i), imageUrl: z.string().refine(v => v === '' || isProductImageUrl(v), 'Use an uploaded product image').default(''), sizes, available: z.boolean(), sortOrder: z.number().int().min(0).max(10000) }).strict();
 const settingsInput = z.object({ shopName: z.string().trim().min(1).max(60), tagline: z.string().trim().max(120), acceptingOrders: z.boolean(), receiptHeader:z.string().trim().max(120).default(''), receiptFooter:z.string().trim().max(120).default('Thank you!'), prepCopy:z.boolean().default(false), batchSize:z.number().int().min(1).max(20).default(5) }).strict();
@@ -32,7 +33,7 @@ export function adminRouter(config, imageStorage, invalidateMenu=()=>{}) {
     }
     next();
   });
-  router.post('/login', rateLimit({ windowMs: 60000, limit: 10, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Too many login attempts. Try again in one minute.' } }), asyncRoute(async (req, res) => {
+  router.post('/login', rateLimit({ windowMs: 60000, limit: 10, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Too many login attempts. Try again in one minute.' } }), accountLoginLimit(), asyncRoute(async (req, res) => {
     const body = z.object({ email: z.string().email().max(254), password: z.string().min(1).max(128) }).strict().parse(req.body);
     const email = body.email.trim().toLowerCase();
     const password = body.password;
@@ -54,7 +55,7 @@ export function adminRouter(config, imageStorage, invalidateMenu=()=>{}) {
   }));
   router.get('/me', asyncRoute(async(req,res)=>res.json(await adminView(req.admin))));
   router.post('/logout', asyncRoute(async (req, res) => { await Admin.updateOne({ _id: req.admin._id }, { $inc: { sessionVersion: 1 } }); res.clearCookie('freshme_admin', cookie).json({ ok: true }); }));
-  router.post('/change-password', asyncRoute(async (req, res) => {
+  router.post('/change-password', passwordChangeLimit(), asyncRoute(async (req, res) => {
     const body = z.object({ currentPassword: z.string().max(128), newPassword: passwordInput }).strict().parse(req.body);
     if (!(await bcrypt.compare(body.currentPassword, req.admin.passwordHash))) throw new HttpError(400, 'Current password is incorrect');
     await Admin.updateOne({ _id: req.admin._id }, { $set: { passwordHash: await bcrypt.hash(body.newPassword, 12) }, $inc: { sessionVersion: 1 } });

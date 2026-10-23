@@ -37,6 +37,8 @@ export function createApp({ config, gateway, logger, imageStorage = createImageS
     origin: (origin, callback) => callback(null, isAllowedOrigin(origin, config.CLIENT_ORIGIN, config.NODE_ENV === 'production')),
     credentials: true
   }));
+  // Include rejected bodies and failed webhook requests in the no-cache policy.
+  app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
   app.get('/healthz', asyncRoute(async (req, res) => { const ok = await databaseHealthy(); res.status(ok ? 200 : 503).json({ ok }); }));
   app.get('/api/images/:filename', asyncRoute(async (req, res) => {
     const body = await imageStorage.read(req.params.filename);
@@ -60,7 +62,6 @@ export function createApp({ config, gateway, logger, imageStorage = createImageS
     res.json({ ok: true });
   }));
   app.use(express.json({ limit: '64kb' }), cookieParser());
-  app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
   // Separate shared-NAT budgets: payment confirmation cannot be starved by cart requests.
   const limit = maximum => rateLimit({ windowMs: 60000, limit: maximum, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'Too many requests. Please wait one minute.' } });
   const publicPost = limit(120), paymentPost = limit(300);
@@ -146,6 +147,7 @@ export function createApp({ config, gateway, logger, imageStorage = createImageS
   });
   app.use((err, req, res, next) => {
     if (res.headersSent) return next(err);
+    if (err.type === 'entity.parse.failed') return res.status(400).json({error:'Invalid JSON body'});
     if (err instanceof ZodError) return res.status(400).json({ error: err.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ') });
     const status = err.status || (err.code === 'LIMIT_FILE_SIZE' ? 413 : 500);
     if (status >= 500) logger.error({ name: err.name, code: err.code, path: req.path }, 'Request failed');

@@ -3,11 +3,11 @@ import {z} from 'zod';
 import {database,transaction} from './database.js';
 import {Shop,Settings,Admin,Order,PrintJob,PlatformSettings,paymentSummary} from './models.js';
 import {asyncRoute,HttpError,istDate,dayRange,dateString,csvCell,objectId} from './utils.js';
-import {superOnly,shopSlug,shopView} from './shops.js';
+import {superOnly,shopSlug,editableShopSlug,shopView} from './shops.js';
 import {passwordInput} from './agent-controls.js';
 import {analyticsPeriod,dailyAnalytics} from './analytics.js';
 const emailInput=z.string().trim().email().max(254).transform(v=>v.toLowerCase());
-const clientInput=z.object({name:z.string().trim().min(1).max(60),slug:shopSlug,email:emailInput,password:passwordInput,tagline:z.string().trim().max(120).default('Sip and chill.')}).strict();
+const clientInput=z.object({name:z.string().trim().min(1).max(60),slug:editableShopSlug,email:emailInput,password:passwordInput,tagline:z.string().trim().max(120).default('Sip and chill.')}).strict();
 const rangeInput=z.object({from:dateString.default(istDate()),to:dateString.default(istDate()),shopId:z.string().min(1).max(80).optional(),page:z.coerce.number().int().min(1).max(100000).default(1)}).strict();
 function dateRange(query){
   const q=rangeInput.parse(query);
@@ -31,7 +31,7 @@ export function platformRoutes(router){
   router.get('/platform/dashboard',asyncRoute(async(req,res)=>{
     const period=analyticsPeriod(req.query),range=dayRange(period.to);
     const [shops,totals,pending,failed,byShop,periodShops,analytics,orders]=await Promise.all([Shop.find(),paymentSummary(range,null),PrintJob.countDocuments({status:{$in:['PENDING','PRINTING']}}),PrintJob.countDocuments({status:'FAILED'}),reportData(range),reportData(period.range),dailyAnalytics(period),Order.find().sort({createdAt:-1,_id:-1}).limit(5).lean()]);
-    const recentOrders=orders.map(({_id,shopId,orderCode,tokenNo,total,status,refunded,createdAt})=>({_id,shopId,shopName:shops.find(shop=>shop._id===shopId)?.name,orderCode,tokenNo,total,status,refunded,createdAt}));
+    const recentOrders=orders.map(({_id,shopId,orderCode,tokenNo,total,status,refunded,createdAt,customerName})=>({_id,shopId,shopName:shops.find(shop=>shop._id===shopId)?.name,orderCode,tokenNo,total,status,refunded,createdAt,customerName}));
     res.json({clients:shops.length,activeClients:shops.filter(s=>s.enabled).length,todayOrders:totals[0].count,revenue:totals[0].revenue,pendingPrints:pending,failedPrints:failed,byShop,recentOrders,analytics:{...analytics,byShop:periodShops}});
   }));
   router.get('/platform/clients',asyncRoute(async(req,res)=>{
@@ -53,7 +53,8 @@ export function platformRoutes(router){
   }));
   router.patch('/platform/clients/:id',asyncRoute(async(req,res)=>{
     const body=z.object({name:z.string().trim().min(1).max(60).optional(),slug:shopSlug.optional(),enabled:z.boolean().optional(),acceptingOrders:z.boolean().optional()}).strict().refine(v=>Object.keys(v).length>0).parse(req.body);
-    await requireShop(req.params.id);
+    const existing=await requireShop(req.params.id);
+    if(body.slug!==undefined&&body.slug!==existing.slug)editableShopSlug.parse(body.slug);
     try{await transaction(async client=>{
       await client.query('SELECT _id FROM fresh_me.shops WHERE _id=$1 FOR UPDATE',[req.params.id]);
       if(body.slug!==undefined)await client.query('UPDATE fresh_me.shops SET slug=$2,"updatedAt"=now() WHERE _id=$1',[req.params.id,body.slug]);

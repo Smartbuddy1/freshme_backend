@@ -73,7 +73,7 @@ try {
     assert.equal(jobs.length,1);assert.equal(jobs[0].orderId,item.order._id);
     const done=await fetch(`${origin}/api/agent/jobs/${jobs[0]._id}/done`,{method:'POST',headers:{'x-agent-key':item.agentKey,'content-type':'application/json'},body:JSON.stringify({claimId:jobs[0].claimId})});assert.equal(done.status,200);
     const admin=await item.context.newPage();admin.setDefaultTimeout(15000);admin.on('pageerror',error=>errors.push(error.message));
-    await admin.goto(origin+'/freshme/admin');await admin.getByLabel('Email address').fill(item.email);await admin.getByLabel('Password',{exact:true}).fill(item.password);await admin.getByRole('button',{name:/get pouring/}).click();
+    await admin.goto(origin+'/freshme/admin');await admin.getByLabel('Email address').fill(item.email);await admin.getByLabel('Password',{exact:true}).fill(item.password);await admin.getByRole('button',{name:'Login',exact:true}).click();
     await admin.getByRole('heading',{name:'A fresh start.',exact:true}).waitFor();
     assert.equal(await admin.locator('.admin-shop-context strong').innerText(),item.shop.name);
     const own=await admin.request.get(origin+'/api/admin/orders');assert.equal(own.status(),200);assert.deepEqual((await own.json()).orders.map(order=>order._id),[item.order._id]);

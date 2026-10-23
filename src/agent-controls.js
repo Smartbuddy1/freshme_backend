@@ -3,7 +3,7 @@ import {z} from 'zod';
 import {database,transaction} from './database.js';
 import {asyncRoute} from './utils.js';
 export const keyHash=value=>createHash('sha256').update(value).digest('hex');
-export const passwordInput=z.string().min(12).max(128).refine(v=>/[a-z]/.test(v)&&/[A-Z]/.test(v)&&/\d/.test(v)&&/[^\w\s]/.test(v),'Use upper/lowercase, a number and a symbol');
+export {passwordInput} from './passwords.js';
 export function agentControlRoutes(router){
   router.post('/agent/pairing',asyncRoute(async(req,res)=>{
     let code;

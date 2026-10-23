@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+import {passwordLength} from './passwords.js';
 dotenv.config({ path: fileURLToPath(new URL('../.env', import.meta.url)), quiet: true });
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -35,7 +36,7 @@ const schema = z.object({
   S3_BUCKET: z.string().min(3).max(63).regex(/^[a-z0-9][a-z0-9.-]*[a-z0-9]$/),
   S3_KEY_PREFIX: z.string().regex(/^[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*$/).default('fresh-me/products'),
   AWS_ACCESS_KEY_ID: z.string().optional(), AWS_SECRET_ACCESS_KEY: z.string().optional(), AWS_SESSION_TOKEN: z.string().optional(),
-  ADMIN_EMAIL: z.string().email(), ADMIN_PASSWORD: z.string().min(12),
+  ADMIN_EMAIL: z.string().email(), ADMIN_PASSWORD: passwordLength,
   CLIENT_ORIGIN: z.string().url(), TRUST_PROXY: z.coerce.number().int().min(0).max(5).default(0),
   LOG_LEVEL: z.enum(['fatal','error','warn','info','debug','trace','silent']).default('info'),
   AGENT_FILE_MODE_ALLOWED: z.enum(['true','false']).default('false').transform(v=>v==='true'),

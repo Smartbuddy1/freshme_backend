@@ -3,6 +3,8 @@ import {Shop,Settings} from './models.js';
 import {asyncRoute,HttpError} from './utils.js';
 import {database} from './database.js';
 export const shopSlug=z.string().min(3).max(60).regex(/^[a-z0-9]+(-[a-z0-9]+)*$/,'Use lowercase words separated by hyphens');
+const reservedSlugs=new Set(['admin','super-admin','api','order','shop','fresheme','freshme','assets','healthz']);
+export const editableShopSlug=shopSlug.refine(value=>!reservedSlugs.has(value),'This shop URL is reserved. Choose a different Shop ID.');
 export const shopView=shop=>({id:shop._id,slug:shop.slug,name:shop.name,enabled:shop.enabled});
 export async function resolveShopIdentifier(identifier,client=database()){
   if(typeof identifier!=='string'||identifier.length>80)return null;
