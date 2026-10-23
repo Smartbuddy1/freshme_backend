@@ -12,7 +12,9 @@ import {resolveShopIdentifier,shopSlug} from './shops.js';
 export const jobNotifier=new EventEmitter();
 jobNotifier.setMaxListeners(200);
 export function notifyNewJob(shopId='shop'){
-  jobNotifier.emit('job:'+(shopId||'shop'));
+  jobNotifier.emit('job:any');
+  jobNotifier.emit('job:shop');
+  if(shopId)jobNotifier.emit('job:'+shopId);
 }
 
 export async function claimJobs(limit=5,shopId='shop'){
@@ -87,19 +89,23 @@ export function agentRouter(config){
       while(!closed && Date.now()<deadline){
         await new Promise(resolve=>{
           let timer;
-          const onJob=()=>{clearTimeout(timer);jobNotifier.off('job:'+req.shopId,onJob);resolve();};
+          const cleanup=()=>{
+            clearTimeout(timer);
+            jobNotifier.off('job:'+req.shopId,onJob);
+            jobNotifier.off('job:any',onJob);
+            jobNotifier.off('job:shop',onJob);
+          };
+          const onJob=()=>{cleanup();resolve();};
           jobNotifier.once('job:'+req.shopId,onJob);
-          const remaining=Math.max(1,Math.min(200,deadline-Date.now()));
-          timer=setTimeout(()=>{jobNotifier.off('job:'+req.shopId,onJob);resolve();},remaining);
+          jobNotifier.once('job:any',onJob);
+          jobNotifier.once('job:shop',onJob);
+          const remaining=Math.max(1,Math.min(100,deadline-Date.now()));
+          timer=setTimeout(()=>{cleanup();resolve();},remaining);
         });
         if(closed)return;
-        const current=await Settings.findById(req.shopId);
-        if(!(await Shop.findById(req.shopId))?.enabled||current?.keyVersion!==req.agentSettings.keyVersion||current?.agentKeyHash!==req.agentSettings.agentKeyHash)throw new HttpError(401,'Agent key rejected');
-        jobs=await claimJobs(current.batchSize,req.shopId);
+        jobs=await claimJobs(s.batchSize,req.shopId);
         if(jobs.length)return res.json(jobs);
       }
-      const sFinal=await Settings.findById(req.shopId);
-      if(!(await Shop.findById(req.shopId))?.enabled||sFinal?.keyVersion!==req.agentSettings.keyVersion||sFinal?.agentKeyHash!==req.agentSettings.agentKeyHash)throw new HttpError(401,'Agent key rejected');
       return res.json([]);
     }finally{res.off('close',close);}
   }));

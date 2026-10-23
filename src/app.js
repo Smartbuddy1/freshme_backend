@@ -44,7 +44,7 @@ export function createApp({ config, gateway, logger, imageStorage = createImageS
     const body = await imageStorage.read(req.params.filename);
     res.set('Cache-Control', imageCacheControl).type('image/webp').send(body);
   }));
-  app.post('/api/webhooks/razorpay', express.raw({ type: 'application/json', limit: '256kb' }), asyncRoute(async (req, res) => {
+  app.post(['/api/webhooks/razorpay', '/freshme/api/webhooks/razorpay'], express.raw({ type: 'application/json', limit: '256kb' }), asyncRoute(async (req, res) => {
     if (!Buffer.isBuffer(req.body) || !validSignature(req.body, req.get('x-razorpay-signature'), config.RAZORPAY_WEBHOOK_SECRET)) throw new HttpError(401, 'Invalid webhook signature');
     let event; try { event = JSON.parse(req.body.toString('utf8')); } catch { throw new HttpError(400, 'Invalid webhook JSON'); }
     event = z.object({ event: z.string(), payload: z.record(z.unknown()).default({}) }).passthrough().parse(event);
@@ -94,10 +94,10 @@ export function createApp({ config, gateway, logger, imageStorage = createImageS
       res.json({ orderId: paid._id, orderCode: paid.orderCode, tokenNo: paid.tokenNo, status: paid.status });
     }));
   }
-  app.post('/api/payments/verify', paymentPost, asyncRoute(async (req, res) => {
+  app.post(['/api/payments/verify', '/freshme/api/payments/verify'], paymentPost, asyncRoute(async (req, res) => {
     const body = z.object({ orderId: objectId, shopSlug:shopSlug.optional(), razorpayOrderId: z.string().min(1).max(100), paymentId: z.string().min(1).max(100), signature: z.string().max(128) }).strict().parse(req.body);
     const shop=await publicShop(body.shopSlug,{allowDisabled:true});
-      const order = await Order.findOne({_id:body.orderId,shopId:shop._id});
+    const order = await Order.findOne({_id:body.orderId,shopId:shop._id});
     if (!order || order.razorpayOrderId !== body.razorpayOrderId || !validSignature(`${order.razorpayOrderId}|${body.paymentId}`, body.signature, config.RAZORPAY_KEY_SECRET)) throw new HttpError(400, 'Payment verification failed');
     const payment = await gateway.payments.fetch(body.paymentId);
     if (payment.order_id !== order.razorpayOrderId || payment.id !== body.paymentId) throw new HttpError(400, 'Payment does not belong to this order');
@@ -110,12 +110,13 @@ export function createApp({ config, gateway, logger, imageStorage = createImageS
     const shop=await publicShop(q.shopSlug,{allowDisabled:true});
     const isObjectId = /^[a-f\d]{24}$/i.test(req.params.id);
     const query = isObjectId ? { _id: req.params.id } : { orderCode: req.params.id.toUpperCase() };
-    let order = await Order.findOne({...query,shopId:shop._id}).select('orderCode tokenNo tokenDate status items total createdAt razorpayOrderId').lean();
+    let order = await Order.findOne({...query,shopId:shop._id}).select('orderCode tokenNo tokenDate status items total createdAt razorpayOrderId customerName').lean();
     if (!order) throw new HttpError(404, 'Order not found');
-    if (order.status === 'PENDING_PAYMENT' && order.razorpayOrderId && !gateway.isDemo && gateway?.orders?.fetch && gateway.orders.fetchPayments && Date.now()-(reconciliationChecks.get(order._id)||0)>=10000) {
-      reconciliationChecks.delete(order._id);
-      reconciliationChecks.set(order._id,Date.now());
-      if(reconciliationChecks.size>1000)reconciliationChecks.delete(reconciliationChecks.keys().next().value);
+    const lastCheck = reconciliationChecks.get(String(order._id));
+    if (order.status === 'PENDING_PAYMENT' && order.razorpayOrderId && !gateway.isDemo && gateway?.orders?.fetch && gateway.orders.fetchPayments && (!lastCheck || Date.now() - lastCheck >= 3500)) {
+      reconciliationChecks.delete(String(order._id));
+      reconciliationChecks.set(String(order._id), Date.now());
+      if (reconciliationChecks.size > 1000) reconciliationChecks.delete(reconciliationChecks.keys().next().value);
       try {
         const remote = await gateway.orders.fetch(order.razorpayOrderId);
         if (remote.status === 'paid') {
