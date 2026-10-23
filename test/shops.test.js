@@ -95,6 +95,27 @@ it('aggregates and filters shared payments without mixing client totals',async()
   const csv=await auth('get','/platform/payments.csv');expect(csv.text).toContain(a.name);expect(csv.text).toContain(b.name);
   expect((await auth('get','/platform/dashboard')).body).toMatchObject({clients:3,todayOrders:2,revenue:20});
 });
+it('returns five newest platform orders with shop names and keeps client history scoped',async()=>{
+  expect((await auth('get','/platform/dashboard')).body.recentOrders).toEqual([]);
+  const created=[];
+  const now=Date.now();
+  for(let i=0;i<7;i++){
+    const shop=i%2?b:a,product=i%2?pb:pa;
+    const order=await createOrder(input(shop,product),gateway,config);
+    await Order.updateOne({_id:order.orderId},{createdAt:new Date(now-i*60000)});
+    created.push(order.orderId);
+  }
+  const response=await auth('get','/platform/dashboard');
+  expect(response.status).toBe(200);
+  expect(response.body.recentOrders.map(order=>order._id)).toEqual(created.slice(0,5));
+  expect(response.body.recentOrders[0]).toMatchObject({shopId:a._id,shopName:a.name,total:10,status:'PENDING_PAYMENT'});
+  expect(response.body.recentOrders[1]).toMatchObject({shopId:b._id,shopName:b.name});
+  for(const order of response.body.recentOrders){expect(order).not.toHaveProperty('phone');expect(order).not.toHaveProperty('razorpayPaymentId');}
+  expect((await auth('get','/platform/dashboard?days=90')).body.recentOrders).toEqual(response.body.recentOrders);
+  const own=(await auth('get','/dashboard',undefined,client)).body.orders;
+  expect(own.map(order=>order._id)).toEqual(created.filter((_,i)=>i%2===0));
+  expect(own.every(order=>order.shopId===a._id)).toBe(true);
+});
 it('charts all clients in IST days with zero-filled dates and bounded periods',async()=>{
   const first=await paid(a,pa),second=await paid(b,pb),outside=await paid(a,pa);
   const start=new Date(istDate()+'T00:00:00+05:30');

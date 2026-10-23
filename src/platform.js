@@ -30,8 +30,9 @@ export function platformRoutes(router){
   router.use('/platform',superOnly);
   router.get('/platform/dashboard',asyncRoute(async(req,res)=>{
     const period=analyticsPeriod(req.query),range=dayRange(period.to);
-    const [shops,totals,pending,failed,byShop,periodShops,analytics]=await Promise.all([Shop.find(),paymentSummary(range,null),PrintJob.countDocuments({status:{$in:['PENDING','PRINTING']}}),PrintJob.countDocuments({status:'FAILED'}),reportData(range),reportData(period.range),dailyAnalytics(period)]);
-    res.json({clients:shops.length,activeClients:shops.filter(s=>s.enabled).length,todayOrders:totals[0].count,revenue:totals[0].revenue,pendingPrints:pending,failedPrints:failed,byShop,analytics:{...analytics,byShop:periodShops}});
+    const [shops,totals,pending,failed,byShop,periodShops,analytics,orders]=await Promise.all([Shop.find(),paymentSummary(range,null),PrintJob.countDocuments({status:{$in:['PENDING','PRINTING']}}),PrintJob.countDocuments({status:'FAILED'}),reportData(range),reportData(period.range),dailyAnalytics(period),Order.find().sort({createdAt:-1,_id:-1}).limit(5).lean()]);
+    const recentOrders=orders.map(({_id,shopId,orderCode,tokenNo,total,status,refunded,createdAt})=>({_id,shopId,shopName:shops.find(shop=>shop._id===shopId)?.name,orderCode,tokenNo,total,status,refunded,createdAt}));
+    res.json({clients:shops.length,activeClients:shops.filter(s=>s.enabled).length,todayOrders:totals[0].count,revenue:totals[0].revenue,pendingPrints:pending,failedPrints:failed,byShop,recentOrders,analytics:{...analytics,byShop:periodShops}});
   }));
   router.get('/platform/clients',asyncRoute(async(req,res)=>{
     const {rows}=await database().query(`SELECT s._id AS id,s.slug,s.name,s.enabled,s."createdAt",c."acceptingOrders",c."agentPrinterStatus",c."agentLastSeenAt",c."agentVersion",
